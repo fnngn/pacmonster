@@ -65,6 +65,7 @@ def confirm_critical_updates(actions):
 
         for package in item.get("packages", []):
             print(f"  - {package}")
+
         print()
 
     answer = input("Continue? [y/N] ").strip().lower()
@@ -97,7 +98,9 @@ def perform_update():
                 "id": action["id"],
                 "name": action["name"],
                 "success": result.returncode == 0,
-                "returncode": result.returncode
+                "returncode": result.returncode,
+                "stdout": result.stdout[-2000:],
+                "stderr": result.stderr[-2000:]
             })
 
         return results
