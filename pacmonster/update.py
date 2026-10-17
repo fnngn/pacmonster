@@ -116,10 +116,6 @@ def perform_update(assume_yes=False):
         print()
         print("PACMONSTER UPDATE")
         print()
-
-        print("STEP  TYPE  ID    NAME           DISTRO   PKG     PROGRESS")
-        print("────  ────  ────  ─────────────  ──────   ──────  ──────────")
-
         for index, action in enumerate(actions, start=1):
 
             progress = max(1, int(index / total * 10))
@@ -127,36 +123,35 @@ def perform_update(assume_yes=False):
 
             bar = "#" * progress + "-" * (10 - progress)
 
-            kind = action["kind"].upper()
-
-            print()
             print(
-                f"{index}/{total:<3}  "
-                f"{kind:<4}  "
-                f"{str(action['id']):<4}  "
-                f"{action['name']:<13}  "
-                f"{action['distro']:<8}  "
-                f"{action['package_manager']:<7}  "
-                f"[{bar}] {percent}%"
+                f"\r[{bar}] {percent:>3}%  " 
+                f"{index}/{total} processing",
+                end="",
+                flush=True
             )
 
-            started = time.perf_counter()
-            result = run(action["command"])
-            duration = time.perf_counter() - started
+            result = execute_action(action)
 
-            print(f"Completed in {duration:.1f}s")
+            print()
 
-            if result.returncode != 0:
+            if result["stdout"]:
+                print(result["stdout"], end="")
+
+            if result["stderr"]:
+                print(result["stderr"], end="")
+
+            print(f"Completed in {result['duration']:.1f}s")
+
+            if not result["success"]:
                 failed += 1
 
             results.append({
                 "id": action["id"],
                 "name": action["name"],
-                "success": result.returncode == 0,
-                "returncode": result.returncode,
-                "duration": round(duration, 1)
+                "success": result["success"],
+                "returncode": result["returncode"],
+                "duration": result["duration"]
             })
-
         total_duration = time.perf_counter() - started_total
 
         print()
