@@ -169,10 +169,6 @@ def dry_run_command():
 def update_command():
     result = perform_update()
 
-    print()
-    print("PACMONSTER UPDATE")
-    print()
-
     if result == "LOCKED":
         print("Another update is already running.")
         return
@@ -185,45 +181,32 @@ def update_command():
         print("No status cache found.")
         return
 
-    if len(result) == 0:
-        print("Nothing to update.")
-        return
-
-    updated = 0
-    failed = 0
-
-    for item in result:
-
-        if item.get("success", False):
-            updated += 1
-            print(f"[OK]   {item['id']} {item['name']}")
-        else:
-            failed += 1
-            print(f"[FAIL] {item['id']} {item['name']} (rc={item.get('returncode', '?' )})")
+    updated = sum(1 for item in result if item.get("success", False))
+    failed = len(result) - updated
+    duration = round(sum(item.get("duration", 0) for item in result), 1)
 
     add_history(
         "update",
         {
             "updated": updated,
             "failed": failed,
-            "results": result
+            "duration": duration
         }
     )
 
-    print()
-    print(f"Updated: {updated}")
-    print(f"Failed:  {failed}")
+
 def history_command():
     print()
     print("PACMONSTER HISTORY")
     print()
+
     for entry in reversed(load_history()):
         print(entry["timestamp"], entry["type"])
+
         for key, value in entry.get("details", {}).items():
             print(" ", key + ":", value)
+
         print()
-
-
 def help_command():
     print("refresh")
     print("refresh-status")
