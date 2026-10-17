@@ -7,6 +7,8 @@ from status import build_status
 from doctor import run_doctor
 from update import build_dry_run
 from update import perform_update
+from history import add_history
+from history import load_history
 
 
 def render_inventory(data):
@@ -36,55 +38,83 @@ def render_status(data):
 
 
 def refresh_command():
+
     inventory = build_inventory()
+
+    add_history(
+        "refresh",
+        {"objects": len(inventory)}
+    )
+
     print(f"Inventory cache updated: {len(inventory)} objects")
 
 
 def refresh_status_command():
+
     inventory = build_inventory()
     status = build_status(inventory)
+
+    add_history(
+        "status",
+        {"objects": len(status)}
+    )
+
     print(f"Status cache updated: {len(status)} objects")
 
 
 def inventory_command():
+
     cache = load_inventory_cache()
+
     if cache is None:
         print("No inventory cache found.")
         return
+
     render_inventory(cache["inventory"])
 
 
 def status_command():
+
     cache = load_status_cache()
+
     if cache is None:
         print("No status cache found.")
         return
+
     render_status(cache["status"])
 
 
 def doctor_command():
+
     print()
     print("PACMONSTER DOCTOR")
     print()
+
     for name, result in run_doctor():
         print(f"[OK] {name}" if result else f"[FAIL] {name}")
 
 
 def dry_run_command():
+
     actions = build_dry_run()
+
     print()
     print("PACMONSTER DRY RUN")
     print()
+
     if not actions:
         print("No actions required.")
         return
+
     for a in actions:
-        print(f"{a['id']} {a['name']} -> {a['command']}")
+        print(f"{a["'id'"]} {a["'name'"]} -> {a["'command'"]}")
 
 
 def update_command():
 
     result = perform_update()
+
+    add_history("update", {})
 
     print()
     print("PACMONSTER UPDATE")
@@ -103,8 +133,19 @@ def update_command():
         return
 
     for item in result:
+        print(f"WOULD UPDATE: {item["'id'"]} {item["'name'"]}")
+
+
+def history_command():
+
+    print()
+    print("PACMONSTER HISTORY")
+    print()
+
+    for entry in reversed(load_history()):
         print(
-          f"WOULD UPDATE: {item['id']} {item['name']}"
+            entry["timestamp"],
+            entry["type"]
         )
 
 
@@ -116,6 +157,7 @@ def help_command():
     print("doctor")
     print("dry-run")
     print("update")
+    print("history")
 
 
 def main():
@@ -139,6 +181,8 @@ def main():
         dry_run_command()
     elif cmd == "update":
         update_command()
+    elif cmd == "history":
+        history_command()
     else:
         help_command()
 
