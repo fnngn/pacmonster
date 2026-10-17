@@ -6,6 +6,7 @@ from cache import load_status_cache
 from status import build_status
 from doctor import run_doctor
 from update import build_dry_run
+from update import perform_update
 
 
 def render_inventory(data):
@@ -35,20 +36,14 @@ def render_status(data):
 
 
 def refresh_command():
-    print("Refreshing inventory...")
     inventory = build_inventory()
-    print()
-    print("Inventory cache updated.")
-    print(f"Objects discovered: {len(inventory)}")
+    print(f"Inventory cache updated: {len(inventory)} objects")
 
 
 def refresh_status_command():
-    print("Refreshing status...")
     inventory = build_inventory()
     status = build_status(inventory)
-    print()
-    print("Status cache updated.")
-    print(f"Objects processed: {len(status)}")
+    print(f"Status cache updated: {len(status)} objects")
 
 
 def inventory_command():
@@ -72,47 +67,55 @@ def doctor_command():
     print("PACMONSTER DOCTOR")
     print()
     for name, result in run_doctor():
-        if result:
-            print(f"[OK]   {name}")
-        else:
-            print(f"[FAIL] {name}")
+        print(f"[OK] {name}" if result else f"[FAIL] {name}")
 
 
 def dry_run_command():
-
     actions = build_dry_run()
-
-    if actions is None:
-        print("No status cache found.")
-        print("Run: refresh-status")
-        return
-
     print()
     print("PACMONSTER DRY RUN")
     print()
-
     if not actions:
         print("No actions required.")
         return
+    for a in actions:
+        print(f"{a['id']} {a['name']} -> {a['command']}")
 
-    for item in actions:
-        print(
-            f"{item['id']} {item['name']} -> {item['command']}"
-        )
+
+def update_command():
+
+    result = perform_update()
 
     print()
-    print(f"Would update: {len(actions)}")
+    print("PACMONSTER UPDATE")
+    print()
+
+    if result == "LOCKED":
+        print("Another update is already running.")
+        return
+
+    if result is None:
+        print("No status cache found.")
+        return
+
+    if len(result) == 0:
+        print("Nothing to update.")
+        return
+
+    for item in result:
+        print(
+          f"WOULD UPDATE: {item['id']} {item['name']}"
+        )
 
 
 def help_command():
-    print("pacmonster commands")
-    print()
     print("refresh")
     print("refresh-status")
     print("inventory")
     print("status")
     print("doctor")
     print("dry-run")
+    print("update")
 
 
 def main():
@@ -120,20 +123,22 @@ def main():
         help_command()
         return
 
-    command = sys.argv[1]
+    cmd = sys.argv[1]
 
-    if command == "refresh":
+    if cmd == "refresh":
         refresh_command()
-    elif command == "refresh-status":
+    elif cmd == "refresh-status":
         refresh_status_command()
-    elif command == "inventory":
+    elif cmd == "inventory":
         inventory_command()
-    elif command == "status":
+    elif cmd == "status":
         status_command()
-    elif command == "doctor":
+    elif cmd == "doctor":
         doctor_command()
-    elif command == "dry-run":
+    elif cmd == "dry-run":
         dry_run_command()
+    elif cmd == "update":
+        update_command()
     else:
         help_command()
 
