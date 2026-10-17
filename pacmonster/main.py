@@ -17,6 +17,10 @@ def render_inventory(data):
     print("PACMONSTER INVENTORY")
     print()
 
+    if not data:
+        print("No inventory entries.")
+        return
+
     id_width = max(len(str(x["id"])) for x in data)
     name_width = max(len(str(x["name"])) for x in data)
     distro_width = max(len(str(x["distro"])) for x in data)
@@ -46,6 +50,10 @@ def render_status(data):
     print("PACMONSTER STATUS")
     print()
 
+    if not data:
+        print("No status entries.")
+        return
+
     id_width = max(len(str(x["id"])) for x in data)
     name_width = max(len(str(x["name"])) for x in data)
     state_width = max(len(str(x["state"])) for x in data)
@@ -73,6 +81,10 @@ def render_status_verbose(data):
     print()
     print("PACMONSTER STATUS (VERBOSE)")
     print()
+    if not data:
+        print("No status entries.")
+        return
+
 
     for item in data:
 
