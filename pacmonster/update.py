@@ -67,7 +67,10 @@ def build_dry_run():
     return actions
 
 
-def confirm_critical_updates(actions):
+def confirm_critical_updates(actions, assume_yes=False):
+
+    if assume_yes:
+        return True
 
     print()
     print(f"Targets to update: {len(actions)}")
@@ -76,8 +79,7 @@ def confirm_critical_updates(actions):
 
     return answer.lower() == "y"
 
-
-def perform_update():
+def perform_update(assume_yes=False):
 
     if not acquire_lock():
         return "LOCKED"
@@ -91,7 +93,7 @@ def perform_update():
         if actions is None:
             return None
 
-        if not confirm_critical_updates(actions):
+        if not confirm_critical_updates(actions, assume_yes):
             return "ABORTED"
 
         results = []

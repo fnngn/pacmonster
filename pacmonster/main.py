@@ -208,8 +208,8 @@ def dry_run_command(json_output=False):
         print(action["id"], action["name"], "->", action["command"])
 
 
-def update_command():
-    result = perform_update()
+def update_command(assume_yes=False):
+    result = perform_update(assume_yes)
 
     if result == "LOCKED":
         print("Another update is already running.")
@@ -293,7 +293,8 @@ def main():
         json_output = "--json" in sys.argv
         dry_run_command(json_output)
     elif cmd == "update":
-        update_command()
+        assume_yes = "--yes" in sys.argv
+        update_command(assume_yes)
     elif cmd == "history":
         json_output = "--json" in sys.argv
         history_command(json_output)
