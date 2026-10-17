@@ -15,6 +15,7 @@ def render_inventory(data):
     print()
     print("PACMONSTER INVENTORY")
     print()
+
     for item in data:
         print(
             str(item["id"]).rjust(4),
@@ -28,6 +29,7 @@ def render_status(data):
     print()
     print("PACMONSTER STATUS")
     print()
+
     for item in data:
         print(
             str(item["id"]).rjust(4),
@@ -43,7 +45,9 @@ def refresh_command():
 
     add_history(
         "refresh",
-        {"objects": len(inventory)}
+        {
+            "objects": len(inventory)
+        }
     )
 
     print(f"Inventory cache updated: {len(inventory)} objects")
@@ -54,9 +58,24 @@ def refresh_status_command():
     inventory = build_inventory()
     status = build_status(inventory)
 
+    systems_with_updates = 0
+    critical_systems = 0
+
+    for item in status:
+
+        if item["state"] == "UPD":
+            systems_with_updates += 1
+
+        if item["state"] == "CRIT":
+            critical_systems += 1
+
     add_history(
         "status",
-        {"objects": len(status)}
+        {
+            "objects": len(status),
+            "systems_with_updates": systems_with_updates,
+            "critical_systems": critical_systems
+        }
     )
 
     print(f"Status cache updated: {len(status)} objects")
@@ -106,15 +125,22 @@ def dry_run_command():
         print("No actions required.")
         return
 
-    for a in actions:
-        print(f"{a["'id'"]} {a["'name'"]} -> {a["'command'"]}")
+    for action in actions:
+        print(
+            f"{action["id"]} {action["name"]} -> {action["command"]}"
+        )
 
 
 def update_command():
 
     result = perform_update()
 
-    add_history("update", {})
+    add_history(
+        "update",
+        {
+            "planned_actions": 0 if result is None or result == "LOCKED" else len(result)
+        }
+    )
 
     print()
     print("PACMONSTER UPDATE")
@@ -133,7 +159,9 @@ def update_command():
         return
 
     for item in result:
-        print(f"WOULD UPDATE: {item["'id'"]} {item["'name'"]}")
+        print(
+            f"WOULD UPDATE: {item["id"]} {item["name"]}"
+        )
 
 
 def history_command():
@@ -143,10 +171,15 @@ def history_command():
     print()
 
     for entry in reversed(load_history()):
-        print(
-            entry["timestamp"],
-            entry["type"]
-        )
+
+        print(f"{entry["timestamp"]} {entry["type"]}")
+
+        details = entry.get("details", {})
+
+        for key, value in details.items():
+            print(f"  {key}: {value}")
+
+        print()
 
 
 def help_command():
@@ -161,6 +194,7 @@ def help_command():
 
 
 def main():
+
     if len(sys.argv) < 2:
         help_command()
         return

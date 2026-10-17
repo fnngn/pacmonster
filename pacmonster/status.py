@@ -31,15 +31,27 @@ def host_updates():
     lines = result.stdout.splitlines()
 
     if len(lines) <= 1:
-        return 0, False
+        return {
+            "count": 0,
+            "critical": False,
+            "packages": []
+        }
 
+    packages = []
     critical = False
 
-    for line in lines:
-        if any(p in line.lower() for p in CRITICAL_PACKAGES):
+    for line in lines[1:]:
+        package = line.split("/")[0]
+        packages.append(package)
+
+        if package in CRITICAL_PACKAGES:
             critical = True
 
-    return len(lines) - 1, critical
+    return {
+        "count": len(packages),
+        "critical": critical,
+        "packages": packages
+    }
 
 
 def arch_updates(vmid):
@@ -49,20 +61,30 @@ def arch_updates(vmid):
     )
 
     if result.returncode == 1:
-        return 0, False
+        return {
+            "count": 0,
+            "critical": False,
+            "packages": []
+        }
 
     if result.returncode != 0:
         return None
 
-    lines = result.stdout.splitlines()
-
+    packages = []
     critical = False
 
-    for line in lines:
-        if any(p in line.lower() for p in CRITICAL_PACKAGES):
+    for line in result.stdout.splitlines():
+        package = line.split()[0]
+        packages.append(package)
+
+        if package in CRITICAL_PACKAGES:
             critical = True
 
-    return len(lines), critical
+    return {
+        "count": len(packages),
+        "critical": critical,
+        "packages": packages
+    }
 
 
 def build_status(inventory):
@@ -73,6 +95,7 @@ def build_status(inventory):
 
         state = "OK"
         updates = 0
+        packages = []
 
         if item.status != "running":
             state = "STOP"
@@ -80,13 +103,14 @@ def build_status(inventory):
 
         elif item.kind == "host":
 
-            count, critical = host_updates()
+            info = host_updates()
 
-            updates = count
+            updates = info["count"]
+            packages = info["packages"]
 
-            if critical:
+            if info["critical"]:
                 state = "CRIT"
-            elif count > 0:
+            elif updates > 0:
                 state = "UPD"
 
         elif item.kind == "lxc":
@@ -98,19 +122,20 @@ def build_status(inventory):
                 updates = "?"
 
             else:
-                count, critical = result
-                updates = count
+                updates = result["count"]
+                packages = result["packages"]
 
-                if critical:
+                if result["critical"]:
                     state = "CRIT"
-                elif count > 0:
+                elif updates > 0:
                     state = "UPD"
 
         status.append({
             "id": item.id,
             "name": item.name,
             "state": state,
-            "updates": updates
+            "updates": updates,
+            "packages": packages
         })
 
     save_status_cache(status)

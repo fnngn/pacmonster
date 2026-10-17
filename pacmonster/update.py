@@ -21,16 +21,17 @@ def build_dry_run():
             continue
 
         if item["id"] == "host":
-            cmd = "apt upgrade"
+            command = "apt upgrade"
         else:
-            cmd = "pacman -Syu"
+            command = "pacman -Syu"
 
         actions.append({
             "id": item["id"],
             "name": item["name"],
-            "command": cmd,
+            "command": command,
             "state": item["state"],
-            "updates": item["updates"]
+            "updates": item["updates"],
+            "packages": item.get("packages", [])
         })
 
     return actions
@@ -42,12 +43,6 @@ def perform_update():
         return "LOCKED"
 
     try:
-        actions = build_dry_run()
-
-        if actions is None:
-            return None
-
-        return actions
-
+        return build_dry_run()
     finally:
         release_lock()
