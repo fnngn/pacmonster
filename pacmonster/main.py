@@ -1,53 +1,81 @@
-from discovery import (
-    discover_lxc,
-    discover_vm,
-    get_host_distro,
-    get_lxc_distro
-)
+import sys
+
+from inventory import build_inventory
+from cache import load_cache
+
+
+def render_inventory(data):
+
+    print()
+    print("PACMONSTER INVENTORY")
+    print("=" * 70)
+
+    print(
+        "ID".rjust(6),
+        "TYPE".ljust(8),
+        "NAME".ljust(16),
+        "DISTRO".ljust(12),
+        "STATUS"
+    )
+
+    print("-" * 70)
+
+    for item in data:
+        print(
+            str(item["id"]).rjust(6),
+            str(item["kind"]).ljust(8),
+            str(item["name"]).ljust(16),
+            str(item["distro"]).ljust(12),
+            item["status"]
+        )
+
+
+def inventory_command():
+
+    inventory = build_inventory()
+
+    render_inventory(
+        [i.__dict__ for i in inventory]
+    )
+
+
+def fast_inventory_command():
+
+    cache = load_cache()
+
+    if cache is None:
+        inventory_command()
+        return
+
+    render_inventory(cache["inventory"])
+
+
+def help_command():
+    print("pacmonster commands")
+    print()
+    print("inventory          refresh inventory")
+    print("inventory-fast     cache only")
+    print("status             coming soon")
+    print("update             coming soon")
 
 
 def main():
 
-    print()
-    print("PACMONSTER")
-    print("=" * 50)
-    print()
+    if len(sys.argv) < 2:
+        help_command()
+        return
 
-    print("HOST")
-    print("-" * 50)
-    print(f"Distro: {get_host_distro()}")
+    command = sys.argv[1]
 
-    print()
+    if command == "inventory":
+        inventory_command()
+        return
 
-    print("LXC")
-    print("-" * 50)
+    if command == "inventory-fast":
+        fast_inventory_command()
+        return
 
-    for lxc in discover_lxc():
-
-        distro = "unknown"
-
-        if lxc["status"] == "running":
-            distro = get_lxc_distro(lxc["id"])
-
-        print(
-            str(lxc["id"]).rjust(4),
-            str(lxc["name"]).ljust(15),
-            str(distro).ljust(10),
-            lxc["status"]
-        )
-
-    print()
-
-    print("VM")
-    print("-" * 50)
-
-    for vm in discover_vm():
-
-        print(
-            str(vm["id"]).rjust(4),
-            str(vm["name"]).ljust(20),
-            vm["status"]
-        )
+    help_command()
 
 
 if __name__ == "__main__":

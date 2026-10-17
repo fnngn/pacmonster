@@ -3,8 +3,9 @@ from dataclasses import dataclass
 
 @dataclass
 class SystemTarget:
-    kind: str
     id: str
     name: str
+    kind: str
     distro: str
-    update_count: int = 0
+    status: str
+    updates: int = 0
