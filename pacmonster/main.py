@@ -217,17 +217,24 @@ def update_command():
     )
 
 
-def history_command():
+def history_command(json_output=False):
+    history = load_history()
+
+    if json_output:
+        print(json.dumps(history, indent=2))
+        return
+
     print()
     print("PACMONSTER HISTORY")
     print()
 
-    for entry in reversed(load_history()):
+    for entry in reversed(history):
         print(entry["timestamp"], entry["type"])
 
         for key, value in entry.get("details", {}).items():
             print(" ", key + ":", value)
 
+        print()
         print()
 def help_command():
     print("refresh")
@@ -266,7 +273,8 @@ def main():
     elif cmd == "update":
         update_command()
     elif cmd == "history":
-        history_command()
+        json_output = "--json" in sys.argv
+        history_command(json_output)
     else:
         help_command()
 
