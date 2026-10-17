@@ -1,6 +1,8 @@
 import subprocess
 
 from cache import save_status_cache
+from reboot import host_needs_reboot
+from reboot import arch_needs_reboot
 
 
 CRITICAL_PACKAGES = [
@@ -31,11 +33,7 @@ def host_updates():
     lines = result.stdout.splitlines()
 
     if len(lines) <= 1:
-        return {
-            "count": 0,
-            "critical": False,
-            "packages": []
-        }
+        return {"count": 0, "critical": False, "packages": []}
 
     packages = []
     critical = False
@@ -61,11 +59,7 @@ def arch_updates(vmid):
     )
 
     if result.returncode == 1:
-        return {
-            "count": 0,
-            "critical": False,
-            "packages": []
-        }
+        return {"count": 0, "critical": False, "packages": []}
 
     if result.returncode != 0:
         return None
@@ -108,7 +102,9 @@ def build_status(inventory):
             updates = info["count"]
             packages = info["packages"]
 
-            if info["critical"]:
+            if host_needs_reboot():
+                state = "REBOOT"
+            elif info["critical"]:
                 state = "CRIT"
             elif updates > 0:
                 state = "UPD"
@@ -125,7 +121,9 @@ def build_status(inventory):
                 updates = result["count"]
                 packages = result["packages"]
 
-                if result["critical"]:
+                if arch_needs_reboot(item.id):
+                    state = "REBOOT"
+                elif result["critical"]:
                     state = "CRIT"
                 elif updates > 0:
                     state = "UPD"

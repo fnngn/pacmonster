@@ -12,29 +12,58 @@ from history import load_history
 
 
 def render_inventory(data):
+
     print()
     print("PACMONSTER INVENTORY")
     print()
 
+    id_width = max(len(str(x["id"])) for x in data)
+    name_width = max(len(str(x["name"])) for x in data)
+    distro_width = max(len(str(x["distro"])) for x in data)
+    status_width = max(len(str(x["status"])) for x in data)
+
+    print(
+        "ID".ljust(id_width),
+        "NAME".ljust(name_width),
+        "DISTRO".ljust(distro_width),
+        "STATUS".ljust(status_width)
+    )
+
+    print("-" * (id_width + name_width + distro_width + status_width + 6))
+
     for item in data:
         print(
-            str(item["id"]).rjust(4),
-            str(item["name"]).ljust(12),
-            str(item["distro"]).ljust(8),
-            item["status"]
+            str(item["id"]).ljust(id_width),
+            str(item["name"]).ljust(name_width),
+            str(item["distro"]).ljust(distro_width),
+            str(item["status"]).ljust(status_width)
         )
 
 
 def render_status(data):
+
     print()
     print("PACMONSTER STATUS")
     print()
 
+    id_width = max(len(str(x["id"])) for x in data)
+    name_width = max(len(str(x["name"])) for x in data)
+    state_width = max(len(str(x["state"])) for x in data)
+
+    print(
+        "ID".ljust(id_width),
+        "NAME".ljust(name_width),
+        "STATE".ljust(state_width),
+        "UPD"
+    )
+
+    print("-" * (id_width + name_width + state_width + 10))
+
     for item in data:
         print(
-            str(item["id"]).rjust(4),
-            str(item["name"]).ljust(12),
-            str(item["state"]).ljust(6),
+            str(item["id"]).ljust(id_width),
+            str(item["name"]).ljust(name_width),
+            str(item["state"]).ljust(state_width),
             item["updates"]
         )
 
@@ -45,9 +74,7 @@ def refresh_command():
 
     add_history(
         "refresh",
-        {
-            "objects": len(inventory)
-        }
+        {"objects": len(inventory)}
     )
 
     print(f"Inventory cache updated: {len(inventory)} objects")
@@ -58,23 +85,21 @@ def refresh_status_command():
     inventory = build_inventory()
     status = build_status(inventory)
 
-    systems_with_updates = 0
-    critical_systems = 0
+    updates = 0
+    critical = 0
 
     for item in status:
-
         if item["state"] == "UPD":
-            systems_with_updates += 1
-
+            updates += 1
         if item["state"] == "CRIT":
-            critical_systems += 1
+            critical += 1
 
     add_history(
         "status",
         {
             "objects": len(status),
-            "systems_with_updates": systems_with_updates,
-            "critical_systems": critical_systems
+            "systems_with_updates": updates,
+            "critical_systems": critical
         }
     )
 
@@ -126,21 +151,12 @@ def dry_run_command():
         return
 
     for action in actions:
-        print(
-            f"{action["id"]} {action["name"]} -> {action["command"]}"
-        )
+        print(action["id"], action["name"], "->", action["command"])
 
 
 def update_command():
 
     result = perform_update()
-
-    add_history(
-        "update",
-        {
-            "planned_actions": 0 if result is None or result == "LOCKED" else len(result)
-        }
-    )
 
     print()
     print("PACMONSTER UPDATE")
@@ -158,10 +174,13 @@ def update_command():
         print("Nothing to update.")
         return
 
+    add_history(
+        "update",
+        {"planned_actions": len(result), "systems": result}
+    )
+
     for item in result:
-        print(
-            f"WOULD UPDATE: {item["id"]} {item["name"]}"
-        )
+        print("WOULD UPDATE:", item["id"], item["name"])
 
 
 def history_command():
@@ -171,13 +190,10 @@ def history_command():
     print()
 
     for entry in reversed(load_history()):
+        print(entry["timestamp"], entry["type"])
 
-        print(f"{entry["timestamp"]} {entry["type"]}")
-
-        details = entry.get("details", {})
-
-        for key, value in details.items():
-            print(f"  {key}: {value}")
+        for key, value in entry.get("details", {}).items():
+            print(" ", key + ":", value)
 
         print()
 
