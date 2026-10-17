@@ -3,6 +3,7 @@ from .discovery import discover_lxc
 from .discovery import discover_vm
 from .discovery import get_host_distro
 from .discovery import get_lxc_distro
+from .discovery import get_package_manager
 from .cache import save_inventory_cache
 from .capabilities import detect_arch_capabilities
 from .capabilities import detect_unknown_capabilities
@@ -12,14 +13,16 @@ def build_inventory():
 
     inventory = []
 
+    host_distro = get_host_distro()
+
     inventory.append(
         SystemTarget(
             id="host",
             name="pve",
             kind="host",
-            distro=get_host_distro(),
+            distro=host_distro,
             status="running",
-            package_manager="apt",
+            package_manager=get_package_manager(host_distro),
             can_check_updates=True,
             can_upgrade=True
         )

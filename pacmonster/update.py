@@ -12,8 +12,6 @@ def run(cmd):
         shell=True,
         text=True
     )
-
-
 def build_dry_run():
 
     from .inventory import build_inventory
@@ -27,13 +25,31 @@ def build_dry_run():
         if item.status != "running":
             continue
 
+        command = None
+
         if item.kind == "host":
-            command = "apt-get update && apt-get upgrade -y"
 
-        elif item.kind == "lxc" and item.package_manager == "pacman":
-            command = f"pct exec {item.id} -- pacman -Syu --noconfirm"
+            if item.package_manager == "apt":
+                command = "apt-get update && apt-get upgrade -y"
 
-        else:
+            elif item.package_manager == "pacman":
+                command = "pacman -Syu --noconfirm"
+
+            elif item.package_manager == "dnf":
+                command = "dnf upgrade -y"
+
+        elif item.kind == "lxc":
+
+            if item.package_manager == "pacman":
+                command = f"pct exec {item.id} -- pacman -Syu --noconfirm"
+
+            elif item.package_manager == "apt":
+                command = f"pct exec {item.id} -- apt-get update && pct exec {item.id} -- apt-get upgrade -y"
+
+            elif item.package_manager == "dnf":
+                command = f"pct exec {item.id} -- dnf upgrade -y"
+
+        if command is None:
             continue
 
         actions.append({
@@ -46,6 +62,7 @@ def build_dry_run():
             "critical": False
         })
 
+    return actions
     return actions
 
 

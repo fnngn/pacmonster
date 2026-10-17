@@ -116,3 +116,17 @@ def get_lxc_distro(vmid):
         return match.group(1).replace("\"", "")
 
     return "unknown"
+
+
+def get_package_manager(distro):
+
+    if distro in ("debian", "ubuntu", "proxmox"):
+        return "apt"
+
+    if distro in ("arch", "archarm"):
+        return "pacman"
+
+    if distro in ("fedora",):
+        return "dnf"
+
+    return "unknown"
