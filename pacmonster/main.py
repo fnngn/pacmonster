@@ -168,23 +168,51 @@ def dry_run_command():
 
 def update_command():
     result = perform_update()
+
     print()
     print("PACMONSTER UPDATE")
     print()
+
     if result == "LOCKED":
         print("Another update is already running.")
         return
+
+    if result == "ABORTED":
+        print("Update aborted.")
+        return
+
     if result is None:
         print("No status cache found.")
         return
+
     if len(result) == 0:
         print("Nothing to update.")
         return
-    add_history("update", {"planned_actions": len(result), "systems": result})
+
+    updated = 0
+    failed = 0
+
     for item in result:
-        print("WOULD UPDATE:", item["id"], item["name"])
 
+        if item.get("success", False):
+            updated += 1
+            print(f"[OK]   {item['id']} {item['name']}")
+        else:
+            failed += 1
+            print(f"[FAIL] {item['id']} {item['name']} (rc={item.get('returncode', '?' )})")
 
+    add_history(
+        "update",
+        {
+            "updated": updated,
+            "failed": failed,
+            "results": result
+        }
+    )
+
+    print()
+    print(f"Updated: {updated}")
+    print(f"Failed:  {failed}")
 def history_command():
     print()
     print("PACMONSTER HISTORY")
@@ -210,7 +238,7 @@ def help_command():
 
 def main():
     if len(sys.argv) < 2:
-        help_command()
+        update_command()
         return
 
     cmd = sys.argv[1]

@@ -16,39 +16,37 @@ def run(cmd):
 
 def build_dry_run():
 
-    cache = load_status_cache()
+    from .inventory import build_inventory
 
-    if cache is None:
-        return None
+    inventory = build_inventory()
 
     actions = []
 
-    for item in cache["status"]:
+    for item in inventory:
 
-        if item["state"] in ("STOP", "ERR"):
+        if item.status != "running":
             continue
 
-        if str(item["updates"]) == "0":
-            continue
-
-        if item["id"] == "host":
+        if item.kind == "host":
             command = "apt-get update && apt-get upgrade -y"
+
+        elif item.kind == "lxc" and item.package_manager == "pacman":
+            command = f"pct exec {item.id} -- pacman -Syu --noconfirm"
+
         else:
-            command = f"pct exec {item['id']} -- pacman -Syu --noconfirm"
+            continue
 
         actions.append({
-            "id": item["id"],
-            "name": item["name"],
+            "id": item.id,
+            "name": item.name,
             "command": command,
-            "state": item["state"],
-            "updates": item["updates"],
-            "packages": item.get("packages", []),
-            "critical": item.get("critical", False)
+            "state": "DIRECT",
+            "updates": "?",
+            "packages": [],
+            "critical": False
         })
 
     return actions
-
-
 def confirm_critical_updates(actions):
 
     critical = [a for a in actions if a.get("critical", False)]
