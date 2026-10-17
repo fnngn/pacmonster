@@ -213,14 +213,16 @@ def update_command(assume_yes=False):
 
     if result == "LOCKED":
         print("Another update is already running.")
-        return
+        sys.exit(3)
 
     if result == "ABORTED":
         print("Update aborted.")
-        return
+        sys.exit(2)
 
     if result is None:
         print("No status cache found.")
+        sys.exit(4)
+
         return
 
     updated = sum(1 for item in result if item.get("success", False))
@@ -235,6 +237,12 @@ def update_command(assume_yes=False):
             "duration": duration
         }
     )
+
+    if failed > 0:
+        sys.exit(1)
+
+    sys.exit(0)
+
 
 
 def history_command(json_output=False):
