@@ -3,7 +3,7 @@ from discovery import discover_lxc
 from discovery import discover_vm
 from discovery import get_host_distro
 from discovery import get_lxc_distro
-from cache import save_cache
+from cache import save_inventory_cache
 from capabilities import detect_arch_capabilities
 from capabilities import detect_unknown_capabilities
 
@@ -28,16 +28,16 @@ def build_inventory():
     for lxc in discover_lxc():
 
         try:
+
             distro = "unknown"
             caps = detect_unknown_capabilities()
 
             if lxc["status"] == "running":
+
                 distro = get_lxc_distro(lxc["id"])
 
                 if distro == "arch":
-                    caps = detect_arch_capabilities(
-                        lxc["id"]
-                    )
+                    caps = detect_arch_capabilities(lxc["id"])
 
             inventory.append(
                 SystemTarget(
@@ -76,6 +76,8 @@ def build_inventory():
             )
         )
 
-    save_cache([item.__dict__ for item in inventory])
+    save_inventory_cache({
+        "inventory": [item.__dict__ for item in inventory]
+    })
 
     return inventory
