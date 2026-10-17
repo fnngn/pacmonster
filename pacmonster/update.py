@@ -69,13 +69,13 @@ def build_dry_run():
 
 def confirm_critical_updates(actions):
 
-    return True
+    print()
+    print(f"Targets to update: {len(actions)}")
 
+    answer = input("Continue update run? [y/N] ")
 
-    if os.geteuid() != 0:
-        print("pacmonster: update requires root privileges")
-        print("hint: sudo pacmonster")
-        return None
+    return answer.lower() == "y"
+
 
 def perform_update():
 
