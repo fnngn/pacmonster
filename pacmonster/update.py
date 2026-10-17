@@ -4,7 +4,12 @@ import time
 
 from .cache import load_status_cache
 from .lock import acquire_lock
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import as_completed
+
 from .lock import release_lock
+GHOSTS = 4
+
 def execute_action(action):
 
     started = time.perf_counter()
@@ -116,46 +121,43 @@ def perform_update(assume_yes=False):
         print()
         print("PACMONSTER UPDATE")
         print()
-        for index, action in enumerate(actions, start=1):
+        futures = {}
 
-            progress = max(1, int(index / total * 10))
-            percent = int(index / total * 100)
+        with ThreadPoolExecutor(max_workers=GHOSTS) as ghosts:
 
-            bar = "#" * progress + "-" * (10 - progress)
+            for action in actions:
+                future = ghosts.submit(execute_action, action)
+                futures[future] = action
 
-            print(
-                f"\r[{bar}] {percent:>3}%  " 
-                f"{index}/{total} processing",
-                end="",
-                flush=True
-            )
+            completed = 0
 
-            result = execute_action(action)
+            for future in as_completed(futures):
 
-            print()
+                result = future.result()
 
-            if result["stdout"]:
-                print(result["stdout"], end="")
+                if result["stdout"]:
+                    print(result["stdout"], end="")
 
-            if result["stderr"]:
-                print(result["stderr"], end="")
+                if result["stderr"]:
+                    print(result["stderr"], end="")
 
-            print(f"Completed in {result['duration']:.1f}s")
+                print(f"Completed in {result['duration']:.1f}s")
 
-            if not result["success"]:
-                failed += 1
+                if not result["success"]:
+                    failed += 1
 
-            results.append({
-                "id": action["id"],
-                "name": action["name"],
-                "success": result["success"],
-                "returncode": result["returncode"],
-                "duration": result["duration"]
-            })
+                action = result["action"]
+
+                results.append({
+                    "id": action["id"],
+                    "name": action["name"],
+                    "success": result["success"],
+                    "returncode": result["returncode"],
+                    "duration": result["duration"]
+                })
+
         total_duration = time.perf_counter() - started_total
 
-        print()
-        print("────────────────────────────────────────────────────────────")
         print()
         print(f"UPDATED      {len(results) - failed}")
         print(f"FAILED       {failed}")
