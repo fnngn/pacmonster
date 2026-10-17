@@ -168,11 +168,24 @@ def status_command(verbose=False, json_output=False):
         render_status(cache["status"])
 
 
-def doctor_command():
+def doctor_command(json_output=False):
+    results = run_doctor()
+
+    if json_output:
+        print(json.dumps([
+            {
+                "name": name,
+                "result": result
+            }
+            for name, result in results
+        ], indent=2))
+        return
+
     print()
     print("PACMONSTER DOCTOR")
     print()
-    for name, result in run_doctor():
+
+    for name, result in results:
         print(f"[OK] {name}" if result else f"[FAIL] {name}")
 
 
@@ -274,7 +287,8 @@ def main():
         json_output = "--json" in sys.argv
         status_command(verbose, json_output)
     elif cmd == "doctor":
-        doctor_command()
+        json_output = "--json" in sys.argv
+        doctor_command(json_output)
     elif cmd == "dry-run":
         json_output = "--json" in sys.argv
         dry_run_command(json_output)
