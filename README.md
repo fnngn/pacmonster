@@ -2,9 +2,9 @@
 
 Pacmonster is a lightweight Linux and Proxmox update orchestrator.
 
-It discovers systems, detects supported package managers and executes updates from a single command while showing native package manager output, progress tracking and execution times.
+It discovers systems, detects supported package managers and executes updates from a single command while preserving native package manager behavior.
 
-Designed for homelabs and small infrastructure environments.
+Designed for homelabs, personal infrastructure and small Linux environments.
 
 No agents.
 No web UI.
@@ -46,13 +46,13 @@ The long-term vision is a lightweight platform capable of maintaining small Linu
 - Update history
 - Update locking
 - Interactive update confirmation
-- Cron-friendly exit codes
+- Unattended update mode
+- JSON output support
 - Inventory caching
 - Status caching
 - Doctor diagnostics
-- JSON output support
-- Installable Python package
 - Proxmox-aware discovery
+- Cron-friendly exit codes
 
 ---
 
@@ -82,7 +82,6 @@ Current status:
 - VM discovery available
 - VM update support not yet implemented
 - VM status support not yet implemented
-- QEMU Guest Agent integration planned
 
 ---
 
@@ -135,7 +134,7 @@ pacmonster inventory
 pacmonster status
 ```
 
-Verbose:
+Verbose mode:
 
 ```bash
 pacmonster status --verbose
@@ -175,9 +174,9 @@ Pacmonster supports machine-readable JSON output.
 ```bash
 pacmonster inventory --json
 pacmonster status --json
-pacmonster doctor --json
-pacmonster dry-run --json
 pacmonster history --json
+pacmonster dry-run --json
+pacmonster doctor --json
 ```
 
 ---
@@ -200,8 +199,8 @@ Updates are executed sequentially.
 
 Each system reports:
 
-- progress
 - package manager output
+- progress information
 - execution time
 - success or failure state
 
@@ -234,7 +233,7 @@ dnf upgrade -y
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Update failures detected |
+| 1 | One or more updates failed |
 | 2 | User aborted operation |
 | 3 | Update lock active |
 | 4 | Runtime error |
@@ -243,7 +242,7 @@ dnf upgrade -y
 
 ## Cache Files
 
-Pacmonster stores data in:
+Pacmonster stores cache data in:
 
 ```text
 ~/.cache/pacmonster/
@@ -265,8 +264,9 @@ Pacmonster was created for:
 
 - homelabs
 - personal infrastructure
-- small Proxmox environments
-- Linux system maintenance
+- small Linux environments
+- Proxmox-based deployments
+- routine system maintenance
 
 It is intentionally not intended to replace:
 
@@ -282,10 +282,8 @@ The goal is operational simplicity and distribution-independent maintenance work
 
 ## Roadmap
 
-- VM package detection
-- VM update support
 - VM status support
-- QEMU Guest Agent integration
+- VM update support
 - Additional package managers
 - Parallel execution
 - Reboot tracking
