@@ -24,7 +24,6 @@ def render_inventory(data):
     print("-" * 110)
 
     for item in data:
-
         print(
             str(item["id"]).rjust(6),
             str(item["kind"]).ljust(8),
@@ -37,23 +36,49 @@ def render_inventory(data):
         )
 
 
+def refresh_command():
+
+    print("Refreshing inventory...")
+
+    build_inventory()
+
+    print("Inventory cache updated.")
+
+
 def inventory_command():
-    inventory = build_inventory()
-    render_inventory([i.__dict__ for i in inventory])
+
+    cache = load_cache()
+
+    if cache is None:
+        print("No cache found. Run: pacmonster refresh")
+        return
+
+    render_inventory(cache["inventory"])
 
 
 def help_command():
+
     print("pacmonster commands")
     print()
-    print("inventory")
+    print("refresh      rebuild cache")
+    print("inventory    show cached inventory")
+    print("status       coming soon")
+    print("update       coming soon")
 
 
 def main():
+
     if len(sys.argv) < 2:
         help_command()
         return
 
-    if sys.argv[1] == "inventory":
+    command = sys.argv[1]
+
+    if command == "refresh":
+        refresh_command()
+        return
+
+    if command == "inventory":
         inventory_command()
         return
 
