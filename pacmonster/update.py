@@ -5,14 +5,27 @@ import time
 from .cache import load_status_cache
 from .lock import acquire_lock
 from .lock import release_lock
+def execute_action(action):
 
+    started = time.perf_counter()
 
-def run(cmd):
-    return subprocess.run(
-        cmd,
+    result = subprocess.run(
+        action["command"],
         shell=True,
-        text=True
+        text=True,
+        capture_output=True
     )
+
+    duration = time.perf_counter() - started
+
+    return {
+        "action": action,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "returncode": result.returncode,
+        "success": result.returncode == 0,
+        "duration": round(duration, 1)
+    }
 
 
 def build_dry_run():
@@ -112,7 +125,7 @@ def perform_update(assume_yes=False):
             progress = max(1, int(index / total * 10))
             percent = int(index / total * 100)
 
-            bar = "█" * progress + "░" * (10 - progress)
+            bar = "#" * progress + "-" * (10 - progress)
 
             kind = action["kind"].upper()
 
@@ -124,7 +137,7 @@ def perform_update(assume_yes=False):
                 f"{action['name']:<13}  "
                 f"{action['distro']:<8}  "
                 f"{action['package_manager']:<7}  "
-                f"{bar} {percent}%"
+                f"[{bar}] {percent}%"
             )
 
             started = time.perf_counter()
