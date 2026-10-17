@@ -12,6 +12,8 @@ def run(cmd):
         shell=True,
         text=True
     )
+
+
 def build_dry_run():
 
     from .inventory import build_inventory
@@ -55,39 +57,18 @@ def build_dry_run():
         actions.append({
             "id": item.id,
             "name": item.name,
-            "command": command,
-            "state": "DIRECT",
-            "updates": "?",
-            "packages": [],
-            "critical": False
+            "kind": item.kind,
+            "distro": item.distro.title(),
+            "package_manager": item.package_manager,
+            "command": command
         })
 
-    return actions
     return actions
 
 
 def confirm_critical_updates(actions):
 
-    critical = [a for a in actions if a.get("critical", False)]
-
-    if not critical:
-        return True
-
-    print()
-    print("CRITICAL UPDATES DETECTED")
-    print()
-
-    for item in critical:
-        print(f"{item['id']} {item['name']}")
-
-        for package in item.get("packages", []):
-            print(f"  - {package}")
-
-        print()
-
-    answer = input("Continue? [y/N] ").strip().lower()
-
-    return answer == "y"
+    return True
 
 
 def perform_update():
@@ -109,31 +90,43 @@ def perform_update():
 
         results = []
         total = len(actions)
+        failed = 0
 
         print()
-        print("╔══════════════════════════════════════╗")
-        print("║         PACMONSTER UPDATE           ║")
-        print("╚══════════════════════════════════════╝")
+        print("PACMONSTER UPDATE")
+        print()
+
+        print("STEP  TYPE  ID    NAME           DISTRO   PKG     PROGRESS")
+        print("────  ────  ────  ─────────────  ──────   ──────  ──────────")
 
         for index, action in enumerate(actions, start=1):
 
-            started = time.perf_counter()
+            progress = max(1, int(index / total * 10))
+            percent = int(index / total * 100)
+
+            bar = "█" * progress + "░" * (10 - progress)
+
+            kind = action["kind"].upper()
 
             print()
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-            print(f"[{index}/{total}] {action['id']} {action['name']}")
-            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print(
+                f"{index}/{total:<3}  "
+                f"{kind:<4}  "
+                f"{str(action['id']):<4}  "
+                f"{action['name']:<13}  "
+                f"{action['distro']:<8}  "
+                f"{action['package_manager']:<7}  "
+                f"{bar} {percent}%"
+            )
 
+            started = time.perf_counter()
             result = run(action["command"])
-
             duration = time.perf_counter() - started
 
-            print()
+            print(f"Completed in {duration:.1f}s")
 
-            if result.returncode == 0:
-                print(f"✓ Completed in {duration:.1f}s")
-            else:
-                print(f"✗ Failed in {duration:.1f}s (rc={result.returncode})")
+            if result.returncode != 0:
+                failed += 1
 
             results.append({
                 "id": action["id"],
@@ -146,9 +139,13 @@ def perform_update():
         total_duration = time.perf_counter() - started_total
 
         print()
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print(f"Total duration: {total_duration:.1f}s")
-        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("────────────────────────────────────────────────────────────")
+        print()
+        print(f"UPDATED      {len(results) - failed}")
+        print(f"FAILED       {failed}")
+        print(f"DURATION     {total_duration:.1f}s")
+        print()
+        print("────────────────────────────────────────────────────────────")
 
         return results
 
