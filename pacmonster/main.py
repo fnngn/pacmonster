@@ -1,4 +1,5 @@
 import sys
+import json
 
 from .inventory import build_inventory
 from .cache import load_inventory_cache
@@ -136,13 +137,18 @@ def refresh_status_command():
     print(f"Status cache updated: {len(status)} objects")
 
 
-def inventory_command():
+def inventory_command(json_output=False):
     cache = load_inventory_cache()
+
     if cache is None:
         print("No inventory cache found.")
         return
-    render_inventory(cache["inventory"])
 
+    if json_output:
+        print(json.dumps(cache["inventory"], indent=2))
+        return
+
+    render_inventory(cache["inventory"])
 
 def status_command(verbose=False):
 
@@ -243,7 +249,8 @@ def main():
     elif cmd == "refresh-status":
         refresh_status_command()
     elif cmd == "inventory":
-        inventory_command()
+        json_output = "--json" in sys.argv
+        inventory_command(json_output)
     elif cmd == "status":
         verbose = "--verbose" in sys.argv
         status_command(verbose)
