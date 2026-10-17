@@ -4,6 +4,7 @@ from inventory import build_inventory
 from cache import load_inventory_cache
 from cache import load_status_cache
 from status import build_status
+from doctor import run_doctor
 
 
 def render_inventory(data):
@@ -77,7 +78,6 @@ def inventory_command():
 
     if cache is None:
         print("No inventory cache found.")
-        print("Run: refresh")
         return
 
     render_inventory(cache["inventory"])
@@ -89,10 +89,25 @@ def status_command():
 
     if cache is None:
         print("No status cache found.")
-        print("Run: refresh-status")
         return
 
     render_status(cache["status"])
+
+
+def doctor_command():
+
+    print()
+    print("PACMONSTER DOCTOR")
+    print()
+
+    checks = run_doctor()
+
+    for name, result in checks:
+
+        if result:
+            print(f"[OK]   {name}")
+        else:
+            print(f"[FAIL] {name}")
 
 
 def help_command():
@@ -103,6 +118,7 @@ def help_command():
     print("refresh-status")
     print("inventory")
     print("status")
+    print("doctor")
 
 
 def main():
@@ -127,6 +143,10 @@ def main():
 
     if command == "status":
         status_command()
+        return
+
+    if command == "doctor":
+        doctor_command()
         return
 
     help_command()
