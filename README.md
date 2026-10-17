@@ -4,7 +4,7 @@ Pacmonster is a lightweight Linux and Proxmox update orchestrator.
 
 It discovers systems, detects supported package managers and executes updates from a single command while showing native package manager output, progress tracking and execution times.
 
-Designed for homelabs.
+Designed for homelabs and small infrastructure environments.
 
 No agents.
 No web UI.
@@ -19,18 +19,38 @@ pacmonster
 
 ---
 
+## Mission
+
+Pacmonster aims to make routine Linux maintenance distribution-agnostic.
+
+Different Linux systems expose different package managers, but update management, status tracking and maintenance workflows share many common requirements.
+
+Pacmonster provides a unified operational interface while continuing to use the native tooling of each distribution.
+
+The project is intentionally not a replacement for package managers.
+
+Instead, it serves as a communication and orchestration layer that translates common maintenance tasks into distribution-specific actions.
+
+The long-term vision is a lightweight platform capable of maintaining small Linux landscapes through a consistent workflow, regardless of the underlying operating system.
+
+---
+
 ## Features
 
 - Automatic inventory discovery
 - Multi-distribution support
+- Package manager abstraction
 - Native package manager output
 - Progress tracking
 - Runtime measurements
 - Update history
 - Update locking
+- Interactive update confirmation
+- Cron-friendly exit codes
 - Inventory caching
 - Status caching
 - Doctor diagnostics
+- JSON output support
 - Installable Python package
 - Proxmox-aware discovery
 
@@ -52,20 +72,24 @@ pacmonster
 | Distribution | Package Manager |
 |-------------|----------------|
 | Arch Linux | pacman |
-| Debian* | apt |
-| Fedora* | dnf |
+| Debian | apt |
+| Fedora | dnf |
 
-\* Support depends on container discovery and package manager detection.
+### Virtual Machines
+
+Current status:
+
+- VM discovery available
+- VM update support not yet implemented
+- VM status support not yet implemented
+- QEMU Guest Agent integration planned
 
 ---
 
 ## Installation
 
-Clone the repository:
-
 ```bash
 git clone https://github.com/fnngn/pacmonster.git
-
 cd pacmonster
 ```
 
@@ -83,130 +107,60 @@ pacmonster help
 
 ---
 
-## Quick Start
-
-Run updates:
-
-```bash
-pacmonster
-```
-
-Example output:
-
-```text
-PACMONSTER UPDATE
-
-STEP  TYPE  ID    NAME           DISTRO   PKG     PROGRESS
-────  ────  ────  ─────────────  ──────   ──────  ──────────
-
-1/9    HOST  host  pve            Debian    apt      █░░░░░░░░░ 11%
-...
-
-9/9    LXC   199   arch-template  Arch      pacman   ██████████ 100%
-
-────────────────────────────────────────────────────────────
-
-UPDATED      9
-FAILED       0
-DURATION     23.6s
-
-────────────────────────────────────────────────────────────
-```
-
----
-
 ## Commands
 
 ### Update
 
-Run updates for all supported systems:
-
-```bash
-pacmonster
-```
-
-or
+Interactive update run:
 
 ```bash
 pacmonster update
 ```
 
----
+Unattended update run:
+
+```bash
+pacmonster update --yes
+```
 
 ### Inventory
-
-Show discovered systems:
 
 ```bash
 pacmonster inventory
 ```
 
----
-
 ### Status
-
-Show update status:
 
 ```bash
 pacmonster status
 ```
 
-Verbose output:
+Verbose:
 
 ```bash
 pacmonster status --verbose
 ```
 
----
-
 ### Refresh
-
-Refresh inventory information:
 
 ```bash
 pacmonster refresh
-```
-
-Refresh status information:
-
-```bash
 pacmonster refresh-status
 ```
 
----
-
 ### Dry Run
-
-Display planned update actions:
 
 ```bash
 pacmonster dry-run
 ```
 
----
-
 ### History
-
-Show recorded events:
 
 ```bash
 pacmonster history
 ```
 
-Example:
-
-```text
-2026-10-17T15:01:26 update
-  updated: 9
-  failed: 0
-  duration: 8.1
-```
-
----
-
 ### Doctor
-
-Run diagnostics:
 
 ```bash
 pacmonster doctor
@@ -214,9 +168,21 @@ pacmonster doctor
 
 ---
 
-## Update Workflow
+## JSON Output
 
-Pacmonster follows a simple workflow:
+Pacmonster supports machine-readable JSON output.
+
+```bash
+pacmonster inventory --json
+pacmonster status --json
+pacmonster doctor --json
+pacmonster dry-run --json
+pacmonster history --json
+```
+
+---
+
+## Update Workflow
 
 ```text
 Inventory
@@ -263,25 +229,21 @@ dnf upgrade -y
 
 ---
 
-## History
+## Exit Codes
 
-Pacmonster records:
-
-- update runs
-- status operations
-- refresh operations
-
-History is stored locally in:
-
-```text
-~/.cache/pacmonster/history.json
-```
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Update failures detected |
+| 2 | User aborted operation |
+| 3 | Update lock active |
+| 4 | Runtime error |
 
 ---
 
 ## Cache Files
 
-Pacmonster stores cache data in:
+Pacmonster stores data in:
 
 ```text
 ~/.cache/pacmonster/
@@ -304,7 +266,7 @@ Pacmonster was created for:
 - homelabs
 - personal infrastructure
 - small Proxmox environments
-- Linux administration
+- Linux system maintenance
 
 It is intentionally not intended to replace:
 
@@ -314,18 +276,18 @@ It is intentionally not intended to replace:
 - SaltStack
 - Kubernetes
 
-The goal is simplicity.
+The goal is operational simplicity and distribution-independent maintenance workflows.
 
 ---
 
 ## Roadmap
 
-Potential future improvements:
-
 - VM package detection
+- VM update support
+- VM status support
+- QEMU Guest Agent integration
 - Additional package managers
 - Parallel execution
-- Update notifications
 - Reboot tracking
 - Maintenance windows
 
@@ -336,13 +298,7 @@ Potential future improvements:
 Run directly from the repository:
 
 ```bash
-python -m pacmonster.main
-```
-
-Install editable:
-
-```bash
-python3 -m pip install --break-system-packages -e .
+python3 -m pacmonster.main
 ```
 
 Run syntax checks:
@@ -358,4 +314,3 @@ python3 -m py_compile pacmonster/*.py
 GNU General Public License v3.0
 
 See the LICENSE file for details.
-
