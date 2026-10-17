@@ -72,7 +72,7 @@ def status_command():
 
     print()
     print("PACMONSTER STATUS")
-    print("=" * 80)
+    print("=" * 90)
 
     print(
         "ID".rjust(6),
@@ -81,7 +81,7 @@ def status_command():
         "UPDATES".rjust(8)
     )
 
-    print("-" * 80)
+    print("-" * 90)
 
     for item in inventory:
 
@@ -92,26 +92,34 @@ def status_command():
             state = "STOPPED"
 
         elif item.kind == "host":
-            count = host_updates()
+
+            count, critical = host_updates()
             updates = str(count)
 
-            if count > 0:
+            if critical:
+                state = "CRITICAL"
+            elif count > 0:
                 state = "UPDATES"
 
         elif item.kind == "lxc":
 
             if item.distro == "arch":
 
-                count = arch_updates(item.id)
+                result = arch_updates(item.id)
 
-                if count is None:
+                if result is None:
                     state = "ERR"
                     updates = "?"
 
                 else:
+
+                    count, critical = result
+
                     updates = str(count)
 
-                    if count > 0:
+                    if critical:
+                        state = "CRITICAL"
+                    elif count > 0:
                         state = "UPDATES"
 
         print(
@@ -126,9 +134,9 @@ def help_command():
 
     print("pacmonster commands")
     print()
-    print("refresh      rebuild cache")
-    print("inventory    show cached inventory")
-    print("status       update status")
+    print("refresh")
+    print("inventory")
+    print("status")
 
 
 def main():

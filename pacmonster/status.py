@@ -1,6 +1,18 @@
 import subprocess
 
 
+CRITICAL_PACKAGES = [
+    "linux",
+    "linux-lts",
+    "linux-zen",
+    "systemd",
+    "glibc",
+    "grub",
+    "openssl",
+    "sudo"
+]
+
+
 def run(cmd):
     return subprocess.run(
         cmd,
@@ -19,9 +31,17 @@ def host_updates():
     lines = result.stdout.splitlines()
 
     if len(lines) <= 1:
-        return 0
+        return (0, False)
 
-    return len(lines) - 1
+    critical = False
+
+    for line in lines:
+        lower = line.lower()
+
+        if any(pkg in lower for pkg in CRITICAL_PACKAGES):
+            critical = True
+
+    return (len(lines) - 1, critical)
 
 
 def arch_updates(vmid):
@@ -31,9 +51,19 @@ def arch_updates(vmid):
     )
 
     if result.returncode == 1:
-        return 0
+        return (0, False)
 
     if result.returncode != 0:
         return None
 
-    return len(result.stdout.splitlines())
+    lines = result.stdout.splitlines()
+
+    critical = False
+
+    for line in lines:
+        lower = line.lower()
+
+        if any(pkg in lower for pkg in CRITICAL_PACKAGES):
+            critical = True
+
+    return (len(lines), critical)
