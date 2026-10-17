@@ -1,5 +1,7 @@
 import subprocess
 
+from cache import save_status_cache
+
 
 CRITICAL_PACKAGES = [
     "linux",
@@ -24,24 +26,20 @@ def run(cmd):
 
 def host_updates():
 
-    result = run(
-        "apt list --upgradable 2>/dev/null"
-    )
+    result = run("apt list --upgradable 2>/dev/null")
 
     lines = result.stdout.splitlines()
 
     if len(lines) <= 1:
-        return (0, False)
+        return 0, False
 
     critical = False
 
     for line in lines:
-        lower = line.lower()
-
-        if any(pkg in lower for pkg in CRITICAL_PACKAGES):
+        if any(p in line.lower() for p in CRITICAL_PACKAGES):
             critical = True
 
-    return (len(lines) - 1, critical)
+    return len(lines) - 1, critical
 
 
 def arch_updates(vmid):
@@ -51,7 +49,7 @@ def arch_updates(vmid):
     )
 
     if result.returncode == 1:
-        return (0, False)
+        return 0, False
 
     if result.returncode != 0:
         return None
@@ -61,9 +59,60 @@ def arch_updates(vmid):
     critical = False
 
     for line in lines:
-        lower = line.lower()
-
-        if any(pkg in lower for pkg in CRITICAL_PACKAGES):
+        if any(p in line.lower() for p in CRITICAL_PACKAGES):
             critical = True
 
-    return (len(lines), critical)
+    return len(lines), critical
+
+
+def build_status(inventory):
+
+    status = []
+
+    for item in inventory:
+
+        state = "OK"
+        updates = 0
+
+        if item.status != "running":
+            state = "STOP"
+            updates = "-"
+
+        elif item.kind == "host":
+
+            count, critical = host_updates()
+
+            updates = count
+
+            if critical:
+                state = "CRIT"
+            elif count > 0:
+                state = "UPD"
+
+        elif item.kind == "lxc":
+
+            result = arch_updates(item.id)
+
+            if result is None:
+                state = "ERR"
+                updates = "?"
+
+            else:
+                count, critical = result
+                updates = count
+
+                if critical:
+                    state = "CRIT"
+                elif count > 0:
+                    state = "UPD"
+
+        status.append({
+            "id": item.id,
+            "name": item.name,
+            "state": state,
+            "updates": updates
+        })
+
+    save_status_cache(status)
+
+    return status
