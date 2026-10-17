@@ -1,4 +1,6 @@
 from .models import SystemTarget
+import socket
+import socket
 from .discovery import discover_lxc
 from .discovery import discover_vm
 from .discovery import get_host_distro
@@ -18,7 +20,7 @@ def build_inventory():
     inventory.append(
         SystemTarget(
             id="host",
-            name="pve",
+            name=socket.gethostname(),
             kind="host",
             distro=host_distro,
             status="running",
