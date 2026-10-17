@@ -176,14 +176,21 @@ def doctor_command():
         print(f"[OK] {name}" if result else f"[FAIL] {name}")
 
 
-def dry_run_command():
+def dry_run_command(json_output=False):
     actions = build_dry_run()
+
+    if json_output:
+        print(json.dumps(actions, indent=2))
+        return
+
     print()
     print("PACMONSTER DRY RUN")
     print()
+
     if not actions:
         print("No actions required.")
         return
+
     for action in actions:
         print(action["id"], action["name"], "->", action["command"])
 
@@ -269,7 +276,8 @@ def main():
     elif cmd == "doctor":
         doctor_command()
     elif cmd == "dry-run":
-        dry_run_command()
+        json_output = "--json" in sys.argv
+        dry_run_command(json_output)
     elif cmd == "update":
         update_command()
     elif cmd == "history":
