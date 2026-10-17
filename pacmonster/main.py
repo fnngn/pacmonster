@@ -40,9 +40,20 @@ def refresh_command():
 
     print("Refreshing inventory...")
 
-    build_inventory()
+    try:
 
-    print("Inventory cache updated.")
+        inventory = build_inventory()
+
+        print()
+        print("Inventory cache updated.")
+        print(f"Objects discovered: {len(inventory)}")
+
+    except Exception as exc:
+
+        print()
+        print("Refresh failed.")
+        print()
+        print(str(exc))
 
 
 def inventory_command():
@@ -62,7 +73,7 @@ def help_command():
     print()
     print("refresh      rebuild cache")
     print("inventory    show cached inventory")
-    print("status       coming soon")
+    print("status       update overview")
     print("update       coming soon")
 
 
