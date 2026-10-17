@@ -1,4 +1,5 @@
 import subprocess
+import os
 import time
 
 from .cache import load_status_cache
@@ -70,6 +71,11 @@ def confirm_critical_updates(actions):
 
     return True
 
+
+    if os.geteuid() != 0:
+        print("pacmonster: update requires root privileges")
+        print("hint: sudo pacmonster")
+        return None
 
 def perform_update():
 
