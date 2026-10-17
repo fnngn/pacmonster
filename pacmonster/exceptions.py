@@ -1,0 +1,2 @@
+class PacmonsterError(Exception):
+    pass

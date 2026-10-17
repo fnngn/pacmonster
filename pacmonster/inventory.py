@@ -27,29 +27,42 @@ def build_inventory():
 
     for lxc in discover_lxc():
 
-        distro = "unknown"
-        caps = detect_unknown_capabilities()
+        try:
+            distro = "unknown"
+            caps = detect_unknown_capabilities()
 
-        if lxc["status"] == "running":
-            distro = get_lxc_distro(lxc["id"])
+            if lxc["status"] == "running":
+                distro = get_lxc_distro(lxc["id"])
 
-            if distro == "arch":
-                caps = detect_arch_capabilities(
-                    lxc["id"]
+                if distro == "arch":
+                    caps = detect_arch_capabilities(
+                        lxc["id"]
+                    )
+
+            inventory.append(
+                SystemTarget(
+                    id=lxc["id"],
+                    name=lxc["name"],
+                    kind="lxc",
+                    distro=distro,
+                    status=lxc["status"],
+                    package_manager=caps["package_manager"],
+                    can_check_updates=caps["can_check_updates"],
+                    can_upgrade=caps["can_upgrade"]
                 )
-
-        inventory.append(
-            SystemTarget(
-                id=lxc["id"],
-                name=lxc["name"],
-                kind="lxc",
-                distro=distro,
-                status=lxc["status"],
-                package_manager=caps["package_manager"],
-                can_check_updates=caps["can_check_updates"],
-                can_upgrade=caps["can_upgrade"]
             )
-        )
+
+        except Exception:
+
+            inventory.append(
+                SystemTarget(
+                    id=lxc["id"],
+                    name=lxc["name"],
+                    kind="lxc",
+                    distro="error",
+                    status="error"
+                )
+            )
 
     for vm in discover_vm():
 
