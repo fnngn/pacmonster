@@ -4,6 +4,8 @@ from discovery import discover_vm
 from discovery import get_host_distro
 from discovery import get_lxc_distro
 from cache import save_cache
+from capabilities import detect_arch_capabilities
+from capabilities import detect_unknown_capabilities
 
 
 def build_inventory():
@@ -16,16 +18,25 @@ def build_inventory():
             name="pve",
             kind="host",
             distro=get_host_distro(),
-            status="running"
+            status="running",
+            package_manager="apt",
+            can_check_updates=True,
+            can_upgrade=True
         )
     )
 
     for lxc in discover_lxc():
 
         distro = "unknown"
+        caps = detect_unknown_capabilities()
 
         if lxc["status"] == "running":
             distro = get_lxc_distro(lxc["id"])
+
+            if distro == "arch":
+                caps = detect_arch_capabilities(
+                    lxc["id"]
+                )
 
         inventory.append(
             SystemTarget(
@@ -33,7 +44,10 @@ def build_inventory():
                 name=lxc["name"],
                 kind="lxc",
                 distro=distro,
-                status=lxc["status"]
+                status=lxc["status"],
+                package_manager=caps["package_manager"],
+                can_check_updates=caps["can_check_updates"],
+                can_upgrade=caps["can_upgrade"]
             )
         )
 
