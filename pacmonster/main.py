@@ -150,12 +150,16 @@ def inventory_command(json_output=False):
 
     render_inventory(cache["inventory"])
 
-def status_command(verbose=False):
+def status_command(verbose=False, json_output=False):
 
     cache = load_status_cache()
 
     if cache is None:
         print("No status cache found.")
+        return
+
+    if json_output:
+        print(json.dumps(cache["status"], indent=2))
         return
 
     if verbose:
@@ -253,7 +257,8 @@ def main():
         inventory_command(json_output)
     elif cmd == "status":
         verbose = "--verbose" in sys.argv
-        status_command(verbose)
+        json_output = "--json" in sys.argv
+        status_command(verbose, json_output)
     elif cmd == "doctor":
         doctor_command()
     elif cmd == "dry-run":
