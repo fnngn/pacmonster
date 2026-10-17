@@ -3,3 +3,5 @@ Name: pacmonster
 Version: 0.7.0
 Summary: Proxmox update manager
 Requires-Python: >=3.11
+License-File: LICENSE
+Dynamic: license-file
