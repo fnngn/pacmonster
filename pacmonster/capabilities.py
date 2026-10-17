@@ -2,30 +2,26 @@ import subprocess
 
 
 def run(cmd):
-    result = subprocess.run(
+    return subprocess.run(
         cmd,
         shell=True,
         text=True,
         capture_output=True
     )
 
-    return result.returncode
-
 
 def detect_arch_capabilities(vmid):
 
-    pacman = run(
-        f"pct exec {vmid} -- which pacman"
-    ) == 0
+    result = run(
+        f"pct exec {vmid} -- pacman -Qu"
+    )
 
-    checkupdates = run(
-        f"pct exec {vmid} -- which checkupdates"
-    ) == 0
+    can_check = result.returncode in (0, 1)
 
     return {
         "package_manager": "pacman",
-        "can_check_updates": checkupdates,
-        "can_upgrade": pacman
+        "can_check_updates": can_check,
+        "can_upgrade": can_check
     }
 
 

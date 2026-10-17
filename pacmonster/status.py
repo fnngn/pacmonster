@@ -9,14 +9,14 @@ def run(cmd):
         capture_output=True
     )
 
-    return result.stdout.strip()
+    return result
 
 
 def host_updates():
 
-    output = run("apt list --upgradable 2>/dev/null")
+    result = run("apt list --upgradable 2>/dev/null")
 
-    lines = output.splitlines()
+    lines = result.stdout.splitlines()
 
     if len(lines) <= 1:
         return 0
@@ -26,11 +26,14 @@ def host_updates():
 
 def lxc_arch_updates(vmid):
 
-    output = run(
-        f"pct exec {vmid} -- checkupdates 2>/dev/null"
+    result = run(
+        f"pct exec {vmid} -- pacman -Qu"
     )
 
-    if not output:
+    if result.returncode == 1:
         return 0
 
-    return len(output.splitlines())
+    if result.returncode != 0:
+        return -1
+
+    return len(result.stdout.splitlines())
