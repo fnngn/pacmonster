@@ -1,4 +1,5 @@
 import subprocess
+import time
 
 from .cache import load_status_cache
 from .lock import acquire_lock
@@ -9,8 +10,7 @@ def run(cmd):
     return subprocess.run(
         cmd,
         shell=True,
-        text=True,
-        capture_output=True
+        text=True
     )
 
 
@@ -47,6 +47,8 @@ def build_dry_run():
         })
 
     return actions
+
+
 def confirm_critical_updates(actions):
 
     critical = [a for a in actions if a.get("critical", False)]
@@ -76,6 +78,8 @@ def perform_update():
     if not acquire_lock():
         return "LOCKED"
 
+    started_total = time.perf_counter()
+
     try:
 
         actions = build_dry_run()
@@ -87,19 +91,47 @@ def perform_update():
             return "ABORTED"
 
         results = []
+        total = len(actions)
 
-        for action in actions:
+        print()
+        print("╔══════════════════════════════════════╗")
+        print("║         PACMONSTER UPDATE           ║")
+        print("╚══════════════════════════════════════╝")
+
+        for index, action in enumerate(actions, start=1):
+
+            started = time.perf_counter()
+
+            print()
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            print(f"[{index}/{total}] {action['id']} {action['name']}")
+            print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
             result = run(action["command"])
+
+            duration = time.perf_counter() - started
+
+            print()
+
+            if result.returncode == 0:
+                print(f"✓ Completed in {duration:.1f}s")
+            else:
+                print(f"✗ Failed in {duration:.1f}s (rc={result.returncode})")
 
             results.append({
                 "id": action["id"],
                 "name": action["name"],
                 "success": result.returncode == 0,
                 "returncode": result.returncode,
-                "stdout": result.stdout[-2000:],
-                "stderr": result.stderr[-2000:]
+                "duration": round(duration, 1)
             })
+
+        total_duration = time.perf_counter() - started_total
+
+        print()
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print(f"Total duration: {total_duration:.1f}s")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
         return results
 
