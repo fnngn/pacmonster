@@ -68,20 +68,38 @@ def render_status(data):
         )
 
 
+def render_status_verbose(data):
+
+    print()
+    print("PACMONSTER STATUS (VERBOSE)")
+    print()
+
+    for item in data:
+
+        print(f"ID: {item['id']}")
+        print(f"NAME: {item['name']}")
+        print(f"STATE: {item['state']}")
+        print(f"UPDATES: {item['updates']}")
+
+        packages = item.get("packages", [])
+
+        if packages:
+            print("PACKAGES:")
+            for package in packages:
+                print(f"  - {package}")
+        else:
+            print("PACKAGES: -")
+
+        print("-" * 25)
+
+
 def refresh_command():
-
     inventory = build_inventory()
-
-    add_history(
-        "refresh",
-        {"objects": len(inventory)}
-    )
-
+    add_history("refresh", {"objects": len(inventory)})
     print(f"Inventory cache updated: {len(inventory)} objects")
 
 
 def refresh_status_command():
-
     inventory = build_inventory()
     status = build_status(inventory)
 
@@ -107,17 +125,14 @@ def refresh_status_command():
 
 
 def inventory_command():
-
     cache = load_inventory_cache()
-
     if cache is None:
         print("No inventory cache found.")
         return
-
     render_inventory(cache["inventory"])
 
 
-def status_command():
+def status_command(verbose=False):
 
     cache = load_status_cache()
 
@@ -125,76 +140,59 @@ def status_command():
         print("No status cache found.")
         return
 
-    render_status(cache["status"])
+    if verbose:
+        render_status_verbose(cache["status"])
+    else:
+        render_status(cache["status"])
 
 
 def doctor_command():
-
     print()
     print("PACMONSTER DOCTOR")
     print()
-
     for name, result in run_doctor():
         print(f"[OK] {name}" if result else f"[FAIL] {name}")
 
 
 def dry_run_command():
-
     actions = build_dry_run()
-
     print()
     print("PACMONSTER DRY RUN")
     print()
-
     if not actions:
         print("No actions required.")
         return
-
     for action in actions:
         print(action["id"], action["name"], "->", action["command"])
 
 
 def update_command():
-
     result = perform_update()
-
     print()
     print("PACMONSTER UPDATE")
     print()
-
     if result == "LOCKED":
         print("Another update is already running.")
         return
-
     if result is None:
         print("No status cache found.")
         return
-
     if len(result) == 0:
         print("Nothing to update.")
         return
-
-    add_history(
-        "update",
-        {"planned_actions": len(result), "systems": result}
-    )
-
+    add_history("update", {"planned_actions": len(result), "systems": result})
     for item in result:
         print("WOULD UPDATE:", item["id"], item["name"])
 
 
 def history_command():
-
     print()
     print("PACMONSTER HISTORY")
     print()
-
     for entry in reversed(load_history()):
         print(entry["timestamp"], entry["type"])
-
         for key, value in entry.get("details", {}).items():
             print(" ", key + ":", value)
-
         print()
 
 
@@ -203,6 +201,7 @@ def help_command():
     print("refresh-status")
     print("inventory")
     print("status")
+    print("status --verbose")
     print("doctor")
     print("dry-run")
     print("update")
@@ -210,7 +209,6 @@ def help_command():
 
 
 def main():
-
     if len(sys.argv) < 2:
         help_command()
         return
@@ -224,7 +222,8 @@ def main():
     elif cmd == "inventory":
         inventory_command()
     elif cmd == "status":
-        status_command()
+        verbose = "--verbose" in sys.argv
+        status_command(verbose)
     elif cmd == "doctor":
         doctor_command()
     elif cmd == "dry-run":

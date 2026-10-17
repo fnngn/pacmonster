@@ -90,6 +90,8 @@ def build_status(inventory):
         state = "OK"
         updates = 0
         packages = []
+        critical = False
+        needs_reboot = False
 
         if item.status != "running":
             state = "STOP"
@@ -101,10 +103,12 @@ def build_status(inventory):
 
             updates = info["count"]
             packages = info["packages"]
+            critical = info["critical"]
+            needs_reboot = host_needs_reboot()
 
-            if host_needs_reboot():
+            if needs_reboot:
                 state = "REBOOT"
-            elif info["critical"]:
+            elif critical:
                 state = "CRIT"
             elif updates > 0:
                 state = "UPD"
@@ -120,10 +124,12 @@ def build_status(inventory):
             else:
                 updates = result["count"]
                 packages = result["packages"]
+                critical = result["critical"]
+                needs_reboot = arch_needs_reboot(item.id)
 
-                if arch_needs_reboot(item.id):
+                if needs_reboot:
                     state = "REBOOT"
-                elif result["critical"]:
+                elif critical:
                     state = "CRIT"
                 elif updates > 0:
                     state = "UPD"
@@ -133,7 +139,9 @@ def build_status(inventory):
             "name": item.name,
             "state": state,
             "updates": updates,
-            "packages": packages
+            "packages": packages,
+            "critical": critical,
+            "needs_reboot": needs_reboot
         })
 
     save_status_cache(status)
