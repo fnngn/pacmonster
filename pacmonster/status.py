@@ -2,19 +2,19 @@ import subprocess
 
 
 def run(cmd):
-    result = subprocess.run(
+    return subprocess.run(
         cmd,
         shell=True,
         text=True,
         capture_output=True
     )
 
-    return result
-
 
 def host_updates():
 
-    result = run("apt list --upgradable 2>/dev/null")
+    result = run(
+        "apt list --upgradable 2>/dev/null"
+    )
 
     lines = result.stdout.splitlines()
 
@@ -24,7 +24,7 @@ def host_updates():
     return len(lines) - 1
 
 
-def lxc_arch_updates(vmid):
+def arch_updates(vmid):
 
     result = run(
         f"pct exec {vmid} -- pacman -Qu"
@@ -34,6 +34,6 @@ def lxc_arch_updates(vmid):
         return 0
 
     if result.returncode != 0:
-        return -1
+        return None
 
     return len(result.stdout.splitlines())

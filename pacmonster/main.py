@@ -2,6 +2,8 @@ import sys
 
 from inventory import build_inventory
 from cache import load_cache
+from status import host_updates
+from status import arch_updates
 
 
 def render_inventory(data):
@@ -41,7 +43,6 @@ def refresh_command():
     print("Refreshing inventory...")
 
     try:
-
         inventory = build_inventory()
 
         print()
@@ -49,10 +50,8 @@ def refresh_command():
         print(f"Objects discovered: {len(inventory)}")
 
     except Exception as exc:
-
         print()
         print("Refresh failed.")
-        print()
         print(str(exc))
 
 
@@ -67,14 +66,69 @@ def inventory_command():
     render_inventory(cache["inventory"])
 
 
+def status_command():
+
+    inventory = build_inventory()
+
+    print()
+    print("PACMONSTER STATUS")
+    print("=" * 80)
+
+    print(
+        "ID".rjust(6),
+        "NAME".ljust(18),
+        "STATE".ljust(12),
+        "UPDATES".rjust(8)
+    )
+
+    print("-" * 80)
+
+    for item in inventory:
+
+        state = "OK"
+        updates = "-"
+
+        if item.status != "running":
+            state = "STOPPED"
+
+        elif item.kind == "host":
+            count = host_updates()
+            updates = str(count)
+
+            if count > 0:
+                state = "UPDATES"
+
+        elif item.kind == "lxc":
+
+            if item.distro == "arch":
+
+                count = arch_updates(item.id)
+
+                if count is None:
+                    state = "ERR"
+                    updates = "?"
+
+                else:
+                    updates = str(count)
+
+                    if count > 0:
+                        state = "UPDATES"
+
+        print(
+            str(item.id).rjust(6),
+            str(item.name).ljust(18),
+            state.ljust(12),
+            str(updates).rjust(8)
+        )
+
+
 def help_command():
 
     print("pacmonster commands")
     print()
     print("refresh      rebuild cache")
     print("inventory    show cached inventory")
-    print("status       update overview")
-    print("update       coming soon")
+    print("status       update status")
 
 
 def main():
@@ -91,6 +145,10 @@ def main():
 
     if command == "inventory":
         inventory_command()
+        return
+
+    if command == "status":
+        status_command()
         return
 
     help_command()
