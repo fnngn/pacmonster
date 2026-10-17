@@ -1,8 +1,8 @@
 import subprocess
 
-from cache import load_status_cache
-from lock import acquire_lock
-from lock import release_lock
+from .cache import load_status_cache
+from .lock import acquire_lock
+from .lock import release_lock
 
 
 def run(cmd):

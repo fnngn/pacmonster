@@ -1,14 +1,14 @@
 import sys
 
-from inventory import build_inventory
-from cache import load_inventory_cache
-from cache import load_status_cache
-from status import build_status
-from doctor import run_doctor
-from update import build_dry_run
-from update import perform_update
-from history import add_history
-from history import load_history
+from .inventory import build_inventory
+from .cache import load_inventory_cache
+from .cache import load_status_cache
+from .status import build_status
+from .doctor import run_doctor
+from .update import build_dry_run
+from .update import perform_update
+from .history import add_history
+from .history import load_history
 
 
 def render_inventory(data):

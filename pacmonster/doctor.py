@@ -1,7 +1,7 @@
 import subprocess
 
-from cache import load_inventory_cache
-from cache import load_status_cache
+from .cache import load_inventory_cache
+from .cache import load_status_cache
 
 
 def command_exists(cmd):

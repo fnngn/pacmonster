@@ -1,11 +1,11 @@
-from models import SystemTarget
-from discovery import discover_lxc
-from discovery import discover_vm
-from discovery import get_host_distro
-from discovery import get_lxc_distro
-from cache import save_inventory_cache
-from capabilities import detect_arch_capabilities
-from capabilities import detect_unknown_capabilities
+from .models import SystemTarget
+from .discovery import discover_lxc
+from .discovery import discover_vm
+from .discovery import get_host_distro
+from .discovery import get_lxc_distro
+from .cache import save_inventory_cache
+from .capabilities import detect_arch_capabilities
+from .capabilities import detect_unknown_capabilities
 
 
 def build_inventory():

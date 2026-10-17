@@ -1,8 +1,8 @@
 import subprocess
 
-from cache import save_status_cache
-from reboot import host_needs_reboot
-from reboot import arch_needs_reboot
+from .cache import save_status_cache
+from .reboot import host_needs_reboot
+from .reboot import arch_needs_reboot
 
 
 CRITICAL_PACKAGES = [
