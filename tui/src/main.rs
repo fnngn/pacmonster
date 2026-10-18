@@ -12,6 +12,8 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::layout::Constraint;
 use ratatui::layout::Direction;
 use ratatui::layout::Layout;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
 use ratatui::widgets::Block;
 use ratatui::widgets::Borders;
 use ratatui::widgets::Cell;
@@ -30,6 +32,57 @@ fn restore_terminal() {
         io::stdout(),
         LeaveAlternateScreen
     );
+}
+
+/// Runtime state of a ghost.
+#[derive(Clone, Debug)]
+struct Ghost {
+    id: usize,
+    target: String,
+    task: String,
+    cpu_percent: f32,
+    memory_mb: u64,
+    state: GhostState,
+}
+
+/// Lifecycle state of a ghost.
+#[derive(Clone, Debug)]
+enum GhostState {
+    Active,
+    Idle,
+    Available,
+    Complete,
+    Failed,
+}
+
+/// Global ghost capacity state.
+#[derive(Clone, Debug)]
+struct Capacity {
+    cpu_budget_percent: u8,
+    ram_budget_percent: u8,
+    active_ghosts: usize,
+    idle_ghosts: usize,
+    available_ghosts: usize,
+}
+
+/// Calculate ghost allocation capacity.
+fn calculate_capacity(
+    active_ghosts: usize,
+    idle_ghosts: usize,
+) -> Capacity {
+
+    let max_ghosts: usize = 8;
+
+    let available_ghosts =
+        max_ghosts.saturating_sub(active_ghosts + idle_ghosts);
+
+    Capacity {
+        cpu_budget_percent: 50,
+        ram_budget_percent: 40,
+        active_ghosts,
+        idle_ghosts,
+        available_ghosts,
+    }
 }
 
 fn main() -> io::Result<()> {
@@ -60,6 +113,45 @@ fn main() -> io::Result<()> {
     loop {
 
         terminal.draw(|frame| {
+
+            // Mock capacity state.
+            let capacity = calculate_capacity(3, 2);
+
+            // Mock ghost pool.
+            let ghosts = vec![
+                Ghost {
+                    id: 1,
+                    target: "tvwc".into(),
+                    task: "Updating packages".into(),
+                    cpu_percent: 3.0,
+                    memory_mb: 412,
+                    state: GhostState::Active,
+                },
+                Ghost {
+                    id: 2,
+                    target: "kuma".into(),
+                    task: "Syncing repos".into(),
+                    cpu_percent: 1.0,
+                    memory_mb: 238,
+                    state: GhostState::Active,
+                },
+                Ghost {
+                    id: 3,
+                    target: "storage".into(),
+                    task: "Complete".into(),
+                    cpu_percent: 0.0,
+                    memory_mb: 0,
+                    state: GhostState::Complete,
+                },
+                Ghost {
+                    id: 4,
+                    target: "pve".into(),
+                    task: "Updating packages".into(),
+                    cpu_percent: 7.0,
+                    memory_mb: 891,
+                    state: GhostState::Active,
+                },
+            ];
 
             let layout = Layout::default()
                 .direction(Direction::Vertical)
