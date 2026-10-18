@@ -1,98 +1,170 @@
 # Pacmonster
 
-Pacmonster is a lightweight Linux and Proxmox update orchestrator.
+Pacmonster is a lightweight Linux and Proxmox update orchestrator designed for homelabs and small infrastructure environments.
 
-It discovers systems, detects supported package managers and executes updates from a single command while preserving native package manager behavior.
-
-Designed for homelabs, personal infrastructure and small Linux environments.
+It discovers systems, identifies supported package managers and executes updates through a parallel worker scheduler while preserving native package manager behavior.
 
 No agents.
+
 No web UI.
+
 No daemon.
+
 No database.
 
 Just:
 
 ```bash
-pacmonster
+pacmonster update
 ```
 
 ---
 
-## Mission
+# Table of Contents
 
-Pacmonster aims to make routine Linux maintenance distribution-agnostic.
-
-Different Linux systems expose different package managers, but update management, status tracking and maintenance workflows share many common requirements.
-
-Pacmonster provides a unified operational interface while continuing to use the native tooling of each distribution.
-
-The project is intentionally not a replacement for package managers.
-
-Instead, it serves as a communication and orchestration layer that translates common maintenance tasks into distribution-specific actions.
-
-The long-term vision is a lightweight platform capable of maintaining small Linux landscapes through a consistent workflow, regardless of the underlying operating system.
+- #mission
+- #current-status
+- #architecture
+- #features
+- #supported-platforms
+- #installation
+- #commands
+- #ghostpool-scheduler
+- #runtime-state
+- #dashboard
+- #update-workflow
+- #package-managers
+- #exit-codes
+- #cache-files
+- #design-goals
+- #roadmap
+- #development
+- #license
 
 ---
 
-## Features
+# Mission
+
+Pacmonster provides a consistent operational interface for maintaining heterogeneous Linux environments.
+
+The project does not replace package managers.
+
+Instead it acts as an orchestration layer that translates maintenance actions into distribution-specific package manager operations.
+
+The long-term goal is a lightweight platform capable of managing small Linux landscapes through a unified workflow regardless of distribution.
+
+---
+
+# Current Status
+
+Version:
+
+```text
+v0.9
+```
+
+Implemented:
 
 - Automatic inventory discovery
 - Multi-distribution support
 - Package manager abstraction
-- Native package manager output
-- Progress tracking
-- Runtime measurements
+- GhostPool scheduler
+- Parallel update execution
+- Runtime state snapshots
+- JSON event streams
+- Rust terminal dashboard
+- Active worker tracking
 - Update history
-- Update locking
-- Interactive update confirmation
-- Unattended update mode
+- Status caching
+- Doctor diagnostics
+- Proxmox-aware discovery
+
+---
+
+# Architecture
+
+```text
+pacmonster
+    │
+    ▼
+Inventory
+    │
+    ▼
+Update Planner
+    │
+    ▼
+GhostPool Scheduler
+    │
+    ├── Update Workers
+    │
+    ├── JSON Event Stream
+    │
+    └── Runtime State
+            │
+            ▼
+        Rust Dashboard
+```
+
+---
+
+# Features
+
+- Parallel update execution
+- Ghost worker scheduler
+- Native package manager output
+- Runtime measurements
+- Execution history
+- Runtime state snapshots
 - JSON output support
 - Inventory caching
 - Status caching
+- Interactive updates
+- Unattended updates
 - Doctor diagnostics
 - Proxmox-aware discovery
 - Cron-friendly exit codes
 
 ---
 
-## Supported Platforms
+# Supported Platforms
 
-### Hosts
+## Hosts
 
-| Distribution | Package Manager |
-|-------------|----------------|
+| Distribution | Manager |
+|--------------|----------|
 | Debian | apt |
 | Proxmox VE | apt |
 | Arch Linux | pacman |
 | Fedora | dnf |
 
-### Containers
+## Containers
 
-| Distribution | Package Manager |
-|-------------|----------------|
-| Arch Linux | pacman |
+| Distribution | Manager |
+|--------------|----------|
 | Debian | apt |
+| Arch Linux | pacman |
 | Fedora | dnf |
 
-### Virtual Machines
+## Virtual Machines
 
 Current status:
 
 - VM discovery available
-- VM update support not yet implemented
-- VM status support not yet implemented
+- VM updates not implemented
+- VM status not implemented
 
 ---
 
-## Installation
+# Installation
+
+Clone repository:
 
 ```bash
 git clone https://github.com/fnngn/pacmonster.git
 cd pacmonster
 ```
 
-Install in editable mode:
+Install:
 
 ```bash
 python3 -m pip install --break-system-packages -e .
@@ -106,60 +178,60 @@ pacmonster help
 
 ---
 
-## Commands
+# Commands
 
-### Update
+## Update
 
-Interactive update run:
+Interactive:
 
 ```bash
 pacmonster update
 ```
 
-Unattended update run:
+Unattended:
 
 ```bash
 pacmonster update --yes
 ```
 
-### Inventory
+## Inventory
 
 ```bash
 pacmonster inventory
 ```
 
-### Status
+## Status
 
 ```bash
 pacmonster status
 ```
 
-Verbose mode:
+Verbose:
 
 ```bash
 pacmonster status --verbose
 ```
 
-### Refresh
+## Refresh
 
 ```bash
 pacmonster refresh
 pacmonster refresh-status
 ```
 
-### Dry Run
+## Dry Run
 
 ```bash
 pacmonster dry-run
 ```
 
-### History
+## History
 
 ```bash
 pacmonster history
 ```
 
-### Doctor
+## Doctor
 
 ```bash
 pacmonster doctor
@@ -167,60 +239,164 @@ pacmonster doctor
 
 ---
 
-## JSON Output
+# GhostPool Scheduler
 
-Pacmonster supports machine-readable JSON output.
+Pacmonster executes updates through a fixed-size worker pool called GhostPool.
 
-```bash
-pacmonster inventory --json
-pacmonster status --json
-pacmonster history --json
-pacmonster dry-run --json
-pacmonster doctor --json
+Each Ghost represents one concurrent execution slot.
+
+Lifecycle:
+
+```text
+Idle
+  │
+  ▼
+Assigned
+  │
+  ▼
+Updating
+  │
+  ▼
+Released
+  │
+  ▼
+Idle
+```
+
+The scheduler continuously tracks:
+
+- Active workers
+- Idle workers
+- Pool capacity
+- Current worker assignments
+
+---
+
+# Runtime State
+
+Runtime information is exported under:
+
+```text
+/var/tmp/
+```
+
+## Event Stream
+
+```text
+/var/tmp/pacmonster-events.jsonl
+```
+
+Append-only scheduler event log.
+
+Example:
+
+```json
+{
+  "event": "assigned",
+  "ghost": 1,
+  "target": "pve"
+}
+```
+
+## Scheduler State
+
+```text
+/var/tmp/pacmonster-state.json
+```
+
+Current runtime snapshot.
+
+Example:
+
+```json
+{
+  "active": 2,
+  "idle": 2,
+  "capacity": 4,
+  "ghosts": [
+    {
+      "id": 1,
+      "busy": true,
+      "target": "pihole"
+    },
+    {
+      "id": 4,
+      "busy": true,
+      "target": "arch-template"
+    }
+  ]
+}
 ```
 
 ---
 
-## Update Workflow
+# Dashboard
+
+A lightweight Rust TUI provides live scheduler visibility.
+
+Current dashboard:
+
+```text
+Ghost Pool
+
+ᗣ Active      2
+◌ Idle        2
+◌ Available   2
+
+ᗣ G01 pihole
+ᗣ G04 arch-template
+```
+
+Launch:
+
+```bash
+cd tui
+cargo run
+```
+
+Quit:
+
+```text
+q
+```
+
+---
+
+# Update Workflow
 
 ```text
 Inventory
     ↓
 Package Manager Detection
     ↓
-Build Action Plan
+Build Update Plan
     ↓
-Execute Updates
+GhostPool Scheduler
     ↓
-Record History
+Parallel Updates
+    ↓
+State Snapshot
+    ↓
+Rust Dashboard
 ```
-
-Updates are executed sequentially.
-
-Each system reports:
-
-- package manager output
-- progress information
-- execution time
-- success or failure state
 
 ---
 
-## Package Manager Support
+# Package Managers
 
-### APT
+## APT
 
 ```bash
 apt-get update && apt-get upgrade -y
 ```
 
-### Pacman
+## Pacman
 
 ```bash
 pacman -Syu --noconfirm
 ```
 
-### DNF
+## DNF
 
 ```bash
 dnf upgrade -y
@@ -228,27 +404,27 @@ dnf upgrade -y
 
 ---
 
-## Exit Codes
+# Exit Codes
 
 | Code | Meaning |
-|------|---------|
+|--------|----------|
 | 0 | Success |
-| 1 | One or more updates failed |
-| 2 | User aborted operation |
+| 1 | Update failure |
+| 2 | User aborted |
 | 3 | Update lock active |
 | 4 | Runtime error |
 
 ---
 
-## Cache Files
+# Cache Files
 
-Pacmonster stores cache data in:
+Pacmonster stores local cache data under:
 
 ```text
 ~/.cache/pacmonster/
 ```
 
-Typical files:
+Examples:
 
 ```text
 history.json
@@ -258,17 +434,17 @@ status.json
 
 ---
 
-## Design Goals
+# Design Goals
 
-Pacmonster was created for:
+Pacmonster is intended for:
 
-- homelabs
-- personal infrastructure
-- small Linux environments
-- Proxmox-based deployments
-- routine system maintenance
+- Homelabs
+- Proxmox environments
+- Personal infrastructure
+- Small Linux environments
+- Routine maintenance workflows
 
-It is intentionally not intended to replace:
+Pacmonster is intentionally not a replacement for:
 
 - Ansible
 - Puppet
@@ -276,39 +452,58 @@ It is intentionally not intended to replace:
 - SaltStack
 - Kubernetes
 
-The goal is operational simplicity and distribution-independent maintenance workflows.
+The focus is operational simplicity.
 
 ---
 
-## Roadmap
+# Roadmap
 
-- VM status support
+## v1.0
+
+- Dashboard cleanup
+- Better terminal restoration
+- Failure visualization
+- Retry support
+- Runtime metrics
+- Host completion tracking
+- Stable dashboard state schema
+
+## Future
+
 - VM update support
-- Additional package managers
-- Parallel execution
+- VM status support
 - Reboot tracking
 - Maintenance windows
+- Additional package managers
 
 ---
 
-## Development
+# Development
 
-Run directly from the repository:
+Run directly:
 
 ```bash
 python3 -m pacmonster.main
 ```
 
-Run syntax checks:
+Python syntax checks:
 
 ```bash
 python3 -m py_compile pacmonster/*.py
 ```
 
+Dashboard:
+
+```bash
+cd tui
+cargo build
+cargo run
+```
+
 ---
 
-## License
+# License
 
 GNU General Public License v3.0
 
-See the LICENSE file for details.
+See LICENSE for details.

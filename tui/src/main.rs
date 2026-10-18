@@ -1,267 +1,123 @@
+use std::fs::File;
 use std::io;
 
-use crossterm::event;
-use crossterm::event::Event;
-use crossterm::event::KeyCode;
+use crossterm::event::{self, Event, KeyCode};
 use crossterm::execute;
-use crossterm::terminal;
-use crossterm::terminal::EnterAlternateScreen;
-use crossterm::terminal::LeaveAlternateScreen;
+use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::Constraint;
-use ratatui::layout::Direction;
-use ratatui::layout::Layout;
+use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::text::Line;
 use ratatui::widgets::Paragraph;
-use ratatui::widgets::Block;
-use ratatui::widgets::Borders;
-use ratatui::widgets::Cell;
-use ratatui::widgets::Gauge;
-use ratatui::widgets::Row;
-use ratatui::widgets::Table;
-use ratatui::widgets::TableState;
 use ratatui::Terminal;
 
-/// Render a mock Pacmonster dashboard.
-/// Restore terminal state on panic or exit.
+#[derive(Clone, Debug, serde::Deserialize)]
+struct StateGhost {
+    id: usize,
+    busy: bool,
+    target: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct StateFile {
+    active: usize,
+    idle: usize,
+    capacity: usize,
+    ghosts: Vec<StateGhost>,
+}
+
+fn read_state() -> Option<StateFile> {
+    let file = File::open("/var/tmp/pacmonster-state.json").ok()?;
+    serde_json::from_reader(file).ok()
+}
+
 fn restore_terminal() {
     let _ = terminal::disable_raw_mode();
-
-    let _ = execute!(
-        io::stdout(),
-        LeaveAlternateScreen
-    );
-}
-
-/// Runtime state of a ghost.
-#[derive(Clone, Debug)]
-struct Ghost {
-    id: usize,
-    target: String,
-    task: String,
-    cpu_percent: f32,
-    memory_mb: u64,
-    state: GhostState,
-}
-
-/// Lifecycle state of a ghost.
-#[derive(Clone, Debug)]
-enum GhostState {
-    Active,
-    Idle,
-    Available,
-    Complete,
-    Failed,
-}
-
-/// Global ghost capacity state.
-#[derive(Clone, Debug)]
-struct Capacity {
-    cpu_budget_percent: u8,
-    ram_budget_percent: u8,
-    active_ghosts: usize,
-    idle_ghosts: usize,
-    available_ghosts: usize,
-}
-
-/// Calculate ghost allocation capacity.
-fn calculate_capacity(
-    active_ghosts: usize,
-    idle_ghosts: usize,
-) -> Capacity {
-
-    let max_ghosts: usize = 8;
-
-    let available_ghosts =
-        max_ghosts.saturating_sub(active_ghosts + idle_ghosts);
-
-    Capacity {
-        cpu_budget_percent: 50,
-        ram_budget_percent: 40,
-        active_ghosts,
-        idle_ghosts,
-        available_ghosts,
-    }
+    let _ = execute!(io::stdout(), LeaveAlternateScreen);
 }
 
 fn main() -> io::Result<()> {
 
-    // Restore terminal on panic.
     std::panic::set_hook(Box::new(|panic| {
         restore_terminal();
         eprintln!("{panic}");
     }));
 
     terminal::enable_raw_mode()?;
-
-    // Switch to alternate screen buffer.
     execute!(
         io::stdout(),
         EnterAlternateScreen
     )?;
 
-    let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = Terminal::new(backend)?;
+    let backend =
+        CrosstermBackend::new(io::stdout());
 
-    // Ensure a clean initial render.
+    let mut terminal =
+        Terminal::new(backend)?;
+
     terminal.clear()?;
-
-    // Hide cursor while TUI is active.
     terminal.hide_cursor()?;
 
     loop {
 
+        let state = read_state();
+
         terminal.draw(|frame| {
 
-            // Mock capacity state.
-            let capacity = calculate_capacity(3, 2);
-
-            // Mock ghost pool.
-            let ghosts = vec![
-                Ghost {
-                    id: 1,
-                    target: "tvwc".into(),
-                    task: "Updating packages".into(),
-                    cpu_percent: 3.0,
-                    memory_mb: 412,
-                    state: GhostState::Active,
-                },
-                Ghost {
-                    id: 2,
-                    target: "kuma".into(),
-                    task: "Syncing repos".into(),
-                    cpu_percent: 1.0,
-                    memory_mb: 238,
-                    state: GhostState::Active,
-                },
-                Ghost {
-                    id: 3,
-                    target: "storage".into(),
-                    task: "Complete".into(),
-                    cpu_percent: 0.0,
-                    memory_mb: 0,
-                    state: GhostState::Complete,
-                },
-                Ghost {
-                    id: 4,
-                    target: "pve".into(),
-                    task: "Updating packages".into(),
-                    cpu_percent: 7.0,
-                    memory_mb: 891,
-                    state: GhostState::Active,
-                },
-            ];
-
-            let layout = Layout::default()
+            let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(5),
                     Constraint::Length(8),
-                    Constraint::Min(8),
+                    Constraint::Min(1),
                 ])
                 .split(frame.area());
 
-            // Global progress view.
-            let progress = Gauge::default()
-                .block(
-                    Block::default()
-                        .title("PACMONSTER")
-                        .borders(Borders::ALL)
-                )
-                .use_unicode(false)
-                .percent(66)
-                .label("66%");
+            let active = state.as_ref().map(|s| s.active).unwrap_or(0);
+            let idle = state.as_ref().map(|s| s.idle).unwrap_or(0);
+            let available = state.as_ref()
+                .map(|s| s.capacity.saturating_sub(s.active))
+                .unwrap_or(0);
 
-            frame.render_widget(progress, layout[0]);
-
-            // Active ghost pool.
-            let ghost_rows = vec![
-                Row::new(vec![
-                    Cell::from("1"),
-                    Cell::from("tvwc"),
-                    Cell::from("Running"),
-                ]),
-                Row::new(vec![
-                    Cell::from("2"),
-                    Cell::from("kuma"),
-                    Cell::from("Running"),
-                ]),
-                Row::new(vec![
-                    Cell::from("3"),
-                    Cell::from("storage"),
-                    Cell::from("Complete"),
-                ]),
-                Row::new(vec![
-                    Cell::from("4"),
-                    Cell::from("pve"),
-                    Cell::from("Running"),
-                ]),
+            let capacity_lines = vec![
+                Line::from("Ghost Pool"),
+                Line::from(""),
+                Line::from(format!("ᗣ Active      {}", active)),
+                Line::from(format!("◌ Idle        {}", idle)),
+                Line::from(format!("◌ Available   {}", available)),
             ];
 
-            let ghosts = Table::new(
-                ghost_rows,
-                [
-                    Constraint::Length(8),
-                    Constraint::Length(20),
-                    Constraint::Length(16),
-                ]
-            )
-            .header(Row::new(vec![
-                "Ghost",
-                "Target",
-                "Status",
-            ]))
-            .block(
-                Block::default()
-                    .title("Ghost Pool")
-                    .borders(Borders::ALL)
+            let capacity_widget =
+                Paragraph::new(capacity_lines);
+
+            frame.render_widget(
+                capacity_widget,
+                chunks[0]
             );
 
-            frame.render_stateful_widget(
-                ghosts,
-                layout[1],
-                &mut TableState::default()
+            let ghost_lines: Vec<Line> = state
+                .map(|s| {
+                    s.ghosts
+                        .into_iter()
+                        .filter(|g| g.busy)
+                        .map(|g| {
+                            Line::from(format!(
+                                "ᗣ G{:02} {}",
+                                g.id,
+                                g.target.unwrap_or_default()
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            let status_widget =
+                Paragraph::new(ghost_lines);
+
+            frame.render_widget(
+                status_widget,
+                chunks[1]
             );
 
-            // Recent events ring buffer.
-            let event_rows = vec![
-                Row::new(vec![
-                    Cell::from("1.2s"),
-                    Cell::from("tvwc completed"),
-                ]),
-                Row::new(vec![
-                    Cell::from("0.9s"),
-                    Cell::from("storage completed"),
-                ]),
-                Row::new(vec![
-                    Cell::from("live"),
-                    Cell::from("homepage running"),
-                ]),
-            ];
-
-            let events = Table::new(
-                event_rows,
-                [
-                    Constraint::Length(12),
-                    Constraint::Min(20),
-                ]
-            )
-            .header(Row::new(vec![
-                "Time",
-                "Event",
-            ]))
-            .block(
-                Block::default()
-                    .title("Events")
-                    .borders(Borders::ALL)
-            );
-
-            frame.render_stateful_widget(
-                events,
-                layout[2],
-                &mut TableState::default()
-            );
         })?;
 
         if let Event::Key(key) = event::read()? {
@@ -271,9 +127,7 @@ fn main() -> io::Result<()> {
         }
     }
 
-    // Restore terminal state.
     terminal::disable_raw_mode()?;
-
     execute!(
         io::stdout(),
         LeaveAlternateScreen

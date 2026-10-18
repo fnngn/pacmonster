@@ -1,0 +1,313 @@
+use std::io;
+use std::fs::File;
+use std::io::BufRead;
+use std::io::BufReader;
+use std::collections::HashMap;
+
+use crossterm::event;
+use crossterm::event::Event;
+use crossterm::event::KeyCode;
+use crossterm::execute;
+use crossterm::terminal;
+use crossterm::terminal::EnterAlternateScreen;
+use crossterm::terminal::LeaveAlternateScreen;
+
+use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Constraint;
+use ratatui::layout::Direction;
+use ratatui::layout::Layout;
+use ratatui::text::Line;
+use ratatui::widgets::Paragraph;
+use ratatui::widgets::Block;
+use ratatui::widgets::Borders;
+use ratatui::widgets::Gauge;
+use ratatui::Terminal;
+
+/// Render a mock Pacmonster dashboard.
+/// Restore terminal state on panic or exit.
+fn restore_terminal() {
+    let _ = terminal::disable_raw_mode();
+
+    let _ = execute!(
+        io::stdout(),
+        LeaveAlternateScreen
+    );
+}
+
+/// Runtime state of a ghost.
+#[derive(Clone, Debug)]
+struct Ghost {
+    id: usize,
+    target: String,
+    task: String,
+    cpu_percent: f32,
+    memory_mb: u64,
+    state: GhostState,
+}
+
+/// Lifecycle state of a ghost.
+#[derive(Clone, Debug)]
+enum GhostState {
+    Active,
+}
+#[derive(Clone, Debug)]
+struct Capacity {
+    cpu_budget_percent: u8,
+    ram_budget_percent: u8,
+    active_ghosts: usize,
+    idle_ghosts: usize,
+    available_ghosts: usize,
+}
+
+/// Calculate ghost allocation capacity.
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct StateGhost {
+    id: usize,
+    busy: bool,
+    target: Option<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+struct StateFile {
+    active: usize,
+    idle: usize,
+    capacity: usize,
+    ghosts: Vec<StateGhost>,
+}
+
+fn read_state() -> Option<StateFile> {
+
+    let file = File::open(
+        "/var/tmp/pacmonster-state.json"
+    ).ok()?;
+
+    serde_json::from_reader(file).ok()
+}
+
+fn calculate_capacity(
+    active_ghosts: usize,
+    idle_ghosts: usize,
+) -> Capacity {
+
+    let max_ghosts: usize = 8;
+
+    let available_ghosts =
+        max_ghosts.saturating_sub(active_ghosts + idle_ghosts);
+
+    Capacity {
+        cpu_budget_percent: 50,
+        ram_budget_percent: 40,
+        active_ghosts,
+        idle_ghosts,
+        available_ghosts,
+    }
+}
+
+fn main() -> io::Result<()> {
+
+    // Restore terminal on panic.
+    std::panic::set_hook(Box::new(|panic| {
+        restore_terminal();
+        eprintln!("{panic}");
+    }));
+
+    terminal::enable_raw_mode()?;
+
+    // Switch to alternate screen buffer.
+    execute!(
+        io::stdout(),
+        EnterAlternateScreen
+    )?;
+
+    let backend = CrosstermBackend::new(io::stdout());
+    let mut terminal = Terminal::new(backend)?;
+
+    // Ensure a clean initial render.
+    terminal.clear()?;
+
+    // Hide cursor while TUI is active.
+    terminal.hide_cursor()?;
+
+    loop {
+
+        terminal.draw(|frame| {
+
+            let events = read_events();
+
+
+            let event_count = events.len();
+
+            // Mock capacity state.
+            let capacity = events
+                .iter()
+                .rev()
+                .find(|event| event.event == "pool")
+                .map(|event| Capacity {
+                    cpu_budget_percent: 50,
+                    ram_budget_percent: 40,
+                    active_ghosts:
+                        event.active.unwrap_or(0) as usize,
+                    idle_ghosts:
+                        event.idle.unwrap_or(0) as usize,
+                    available_ghosts:
+                        (event.capacity.unwrap_or(0) as usize)
+                            .saturating_sub(
+                                event.active.unwrap_or(0) as usize
+                            ),
+                })
+                .unwrap_or_else(|| {
+                    calculate_capacity(0, 4)
+                });
+            let mut ghost_map: HashMap<u64, Ghost> =
+                HashMap::new();
+
+            for event in &events {
+
+                match event.event.as_str() {
+
+                    "assigned" => {
+
+                        let id =
+                            event.ghost.unwrap_or(0);
+
+                        ghost_map.insert(
+                            id,
+                            Ghost {
+                                id: id as usize,
+                                target: event
+                                    .target
+                                    .clone()
+                                    .unwrap_or_default(),
+                                task: "Running".into(),
+                                cpu_percent: 0.0,
+                                memory_mb: 0,
+                                state: GhostState::Active,
+                            }
+                        );
+                    }
+
+                    "released" => {
+
+                        if let Some(id) = event.ghost {
+                            ghost_map.remove(&id);
+                        }
+                    }
+
+                    _ => {}
+                }
+            }
+
+            let mut ghosts: Vec<Ghost> =
+                ghost_map.into_values().collect();
+
+            ghosts.sort_by_key(|ghost| ghost.id);
+
+            let layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(5),
+                    Constraint::Length(8),
+                    Constraint::Min(8),
+                ])
+                .split(frame.area());
+
+            // Global progress view.
+            let progress = Gauge::default()
+                .block(
+                    Block::default()
+                        .title("PACMONSTER")
+                        .borders(Borders::ALL)
+                )
+                .use_unicode(false)
+                .percent(66)
+                .label("66%");
+
+            frame.render_widget(progress, layout[0]);
+
+            let capacity_lines = vec![
+                Line::from("Ghost Capacity"),
+                Line::from(format!(
+                    "Events Loaded {}",
+                    event_count
+                )),
+                Line::from(""),
+                Line::from(format!(
+                    "CPU  [##########----------] {}%",
+                    capacity.cpu_budget_percent
+                )),
+                Line::from(format!(
+                    "RAM  [########------------] {}%",
+                    capacity.ram_budget_percent
+                )),
+                Line::from(""),
+                Line::from("Ghost Pool"),
+                Line::from(""),
+                Line::from(format!(
+                    "ᗣ Active      {}",
+                    capacity.active_ghosts
+                )),
+                Line::from(format!(
+                    "◌ Idle        {}",
+                    capacity.idle_ghosts
+                )),
+                Line::from(format!(
+                    "◌ Available   {}",
+                    capacity.available_ghosts
+                )),
+            ];
+
+            let capacity_widget =
+                Paragraph::new(capacity_lines);
+
+            frame.render_widget(
+                capacity_widget,
+                layout[1]
+            );
+
+            let ghost_lines: Vec<Line> = ghosts
+                .iter()
+                .map(|ghost| {
+
+                    let icon = match ghost.state {
+                        GhostState::Active => "ᗣ",
+                    };
+
+                    Line::from(format!(
+                        "{} G{:02} {:<10} {:<20} {:>3.0}% {:>5}MB",
+                        icon,
+                        ghost.id,
+                        ghost.target,
+                        ghost.task,
+                        ghost.cpu_percent,
+                        ghost.memory_mb
+                    ))
+                })
+                .collect();
+
+            let status_widget =
+                Paragraph::new(ghost_lines);
+
+            frame.render_widget(
+                status_widget,
+                layout[2]
+            );
+        })?;
+
+        if let Event::Key(key) = event::read()? {
+            if key.code == KeyCode::Char('q') {
+                break;
+            }
+        }
+    }
+
+    // Restore terminal state.
+    terminal::disable_raw_mode()?;
+
+    execute!(
+        io::stdout(),
+        LeaveAlternateScreen
+    )?;
+
+    Ok(())
+}
