@@ -1,5 +1,6 @@
-use std::fs::File;
+use std::fs::{self, File};
 use std::io;
+use std::path::PathBuf;
 
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::execute;
@@ -27,8 +28,28 @@ struct StateFile {
 }
 
 fn read_state() -> Option<StateFile> {
-    let file = File::open("/var/tmp/pacmonster-state.json").ok()?;
-    serde_json::from_reader(file).ok()
+    let effective_uid = fs::read_to_string("/proc/self/status")
+        .ok()?
+        .lines()
+        .find(|line| line.starts_with("Uid:"))?
+        .split_whitespace()
+        .nth(1)?
+        .parse::<u32>()
+        .ok()?;
+    let paths = [
+        PathBuf::from(format!("/var/tmp/pacmonster-state-{effective_uid}.json")),
+        PathBuf::from("/var/tmp/pacmonster-state-0.json"),
+    ];
+
+    paths
+        .iter()
+        .filter_map(|path| {
+            let modified = path.metadata().ok()?.modified().ok()?;
+            let state = serde_json::from_reader(File::open(path).ok()?).ok()?;
+            Some((modified, state))
+        })
+        .max_by_key(|(modified, _)| *modified)
+        .map(|(_, state)| state)
 }
 
 fn restore_terminal() {

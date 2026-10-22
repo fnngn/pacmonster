@@ -22,24 +22,25 @@ pacmonster update
 
 # Table of Contents
 
-- #mission
-- #current-status
-- #architecture
-- #features
-- #supported-platforms
-- #installation
-- #commands
-- #ghostpool-scheduler
-- #runtime-state
-- #dashboard
-- #update-workflow
-- #package-managers
-- #exit-codes
-- #cache-files
-- #design-goals
-- #roadmap
-- #development
-- #license
+- [Mission](#mission)
+- [Current Status](#current-status)
+- [Architecture](#architecture)
+- [Features](#features)
+- [Supported Platforms](#supported-platforms)
+- [Installation](#installation)
+- [Commands](#commands)
+- [GhostPool Scheduler](#ghostpool-scheduler)
+- [Runtime State](#runtime-state)
+- [Dashboard](#dashboard)
+- [Update Workflow](#update-workflow)
+- [Package Managers](#package-managers)
+- [Exit Codes](#exit-codes)
+- [Cache Files](#cache-files)
+- [Design Goals](#design-goals)
+- [Roadmap](#roadmap)
+- [Development](#development)
+- [Credits](#credits)
+- [License](#license)
 
 ---
 
@@ -167,14 +168,16 @@ cd pacmonster
 Install:
 
 ```bash
-python3 -m pip install --break-system-packages -e .
+./install.sh
 ```
 
 Verify installation:
 
 ```bash
-pacmonster help
+sudo pacmonster help
 ```
+
+The installer uses `sudo` when needed and installs the command under `/usr/local/bin`, so it is available to `sudo` without depending on the user's `~/.local/bin`.
 
 ---
 
@@ -185,56 +188,53 @@ pacmonster help
 Interactive:
 
 ```bash
-pacmonster update
+sudo pacmonster update
 ```
 
 Unattended:
 
 ```bash
-pacmonster update --yes
+sudo pacmonster update --yes
 ```
 
 ## Inventory
 
 ```bash
-pacmonster inventory
+sudo pacmonster refresh
+sudo pacmonster inventory
 ```
 
 ## Status
 
 ```bash
-pacmonster status
+sudo pacmonster refresh-status
+sudo pacmonster status
 ```
 
 Verbose:
 
 ```bash
-pacmonster status --verbose
+sudo pacmonster status --verbose
 ```
 
-## Refresh
-
-```bash
-pacmonster refresh
-pacmonster refresh-status
-```
+`inventory` and `status` display cached snapshots. Run the corresponding refresh command to discover systems or check for current package updates.
 
 ## Dry Run
 
 ```bash
-pacmonster dry-run
+sudo pacmonster dry-run
 ```
 
 ## History
 
 ```bash
-pacmonster history
+sudo pacmonster history
 ```
 
 ## Doctor
 
 ```bash
-pacmonster doctor
+sudo pacmonster doctor
 ```
 
 ---
@@ -280,10 +280,12 @@ Runtime information is exported under:
 /var/tmp/
 ```
 
+Event and state files include the effective user ID in their names so root and regular-user runs do not conflict over file ownership.
+
 ## Event Stream
 
 ```text
-/var/tmp/pacmonster-events.jsonl
+/var/tmp/pacmonster-events-<uid>.jsonl
 ```
 
 Append-only scheduler event log.
@@ -301,7 +303,7 @@ Example:
 ## Scheduler State
 
 ```text
-/var/tmp/pacmonster-state.json
+/var/tmp/pacmonster-state-<uid>.json
 ```
 
 Current runtime snapshot.
@@ -478,6 +480,12 @@ The focus is operational simplicity.
 
 ---
 
+# Credits
+
+This maintenance work was completed with assistance from GitHub Copilot.
+
+---
+
 # Development
 
 Run directly:
@@ -490,6 +498,12 @@ Python syntax checks:
 
 ```bash
 python3 -m py_compile pacmonster/*.py
+```
+
+Run tests:
+
+```bash
+python3 -m unittest discover -s tests
 ```
 
 Dashboard:

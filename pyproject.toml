@@ -10,3 +10,7 @@ requires-python = ">=3.11"
 
 [project.scripts]
 pacmonster = "pacmonster.main:main"
+
+[tool.setuptools.packages.find]
+include = ["pacmonster*"]
+exclude = ["tests*", "tui*"]

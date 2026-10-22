@@ -1,8 +1,10 @@
 import json
+import os
 from pathlib import Path
 
-EVENT_LOG = Path("/var/tmp/pacmonster-events.jsonl")
-STATE_FILE = Path("/var/tmp/pacmonster-state.json")
+RUNTIME_DIR = Path("/var/tmp")
+EVENT_LOG = RUNTIME_DIR / f"pacmonster-events-{os.geteuid()}.jsonl"
+STATE_FILE = RUNTIME_DIR / f"pacmonster-state-{os.geteuid()}.json"
 
 
 

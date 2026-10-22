@@ -17,66 +17,53 @@ CRITICAL_PACKAGES = [
 ]
 
 
-def run(cmd):
+def run(command):
     return subprocess.run(
-        cmd,
-        shell=True,
+        command,
         text=True,
         capture_output=True
     )
 
 
-def host_updates():
-
-    result = run("apt list --upgradable 2>/dev/null")
-
-    lines = result.stdout.splitlines()
-
-    if len(lines) <= 1:
-        return {"count": 0, "critical": False, "packages": []}
-
-    packages = []
-    critical = False
-
-    for line in lines[1:]:
-        package = line.split("/")[0]
-        packages.append(package)
-
-        if package in CRITICAL_PACKAGES:
-            critical = True
-
-    return {
-        "count": len(packages),
-        "critical": critical,
-        "packages": packages
+def package_updates(package_manager, target_id=None):
+    commands = {
+        "apt": ["apt", "list", "--upgradable"],
+        "pacman": ["pacman", "-Qu"],
+        "dnf": ["dnf", "check-update"],
     }
 
-
-def arch_updates(vmid):
-
-    result = run(
-        f"pct exec {vmid} -- pacman -Qu"
-    )
-
-    if result.returncode == 1:
-        return {"count": 0, "critical": False, "packages": []}
-
-    if result.returncode != 0:
+    command = commands.get(package_manager)
+    if command is None:
         return None
 
-    packages = []
-    critical = False
+    if target_id is not None:
+        command = ["pct", "exec", str(target_id), "--", *command]
 
-    for line in result.stdout.splitlines():
-        package = line.split()[0]
-        packages.append(package)
+    result = run(command)
+    if package_manager == "pacman" and result.returncode == 1:
+        return {"count": 0, "critical": False, "packages": []}
+    if package_manager == "dnf" and result.returncode not in (0, 100):
+        return None
+    if package_manager != "dnf" and result.returncode != 0:
+        return None
 
-        if package in CRITICAL_PACKAGES:
-            critical = True
+    lines = result.stdout.splitlines()
+    if package_manager == "apt":
+        lines = lines[1:]
+        packages = [line.split("/", 1)[0] for line in lines if "/" in line]
+    elif package_manager == "pacman":
+        packages = [line.split()[0] for line in lines if line.split()]
+    else:
+        packages = [
+            line.split()[0].split(".", 1)[0]
+            for line in lines
+            if len(line.split()) >= 3
+            and not line.strip().startswith("Last metadata")
+        ]
 
     return {
         "count": len(packages),
-        "critical": critical,
+        "critical": any(package in CRITICAL_PACKAGES for package in packages),
         "packages": packages
     }
 
@@ -97,35 +84,22 @@ def build_status(inventory):
             state = "STOP"
             updates = "-"
 
-        elif item.kind == "host":
+        elif item.kind in ("host", "lxc"):
 
-            info = host_updates()
+            target_id = item.id if item.kind == "lxc" else None
+            info = package_updates(item.package_manager, target_id)
 
-            updates = info["count"]
-            packages = info["packages"]
-            critical = info["critical"]
-            needs_reboot = host_needs_reboot()
-
-            if needs_reboot:
-                state = "REBOOT"
-            elif critical:
-                state = "CRIT"
-            elif updates > 0:
-                state = "UPD"
-
-        elif item.kind == "lxc":
-
-            result = arch_updates(item.id)
-
-            if result is None:
+            if info is None:
                 state = "ERR"
                 updates = "?"
-
             else:
-                updates = result["count"]
-                packages = result["packages"]
-                critical = result["critical"]
-                needs_reboot = arch_needs_reboot(item.id)
+                updates = info["count"]
+                packages = info["packages"]
+                critical = info["critical"]
+                if item.kind == "host":
+                    needs_reboot = host_needs_reboot()
+                elif item.package_manager == "pacman":
+                    needs_reboot = arch_needs_reboot(item.id)
 
                 if needs_reboot:
                     state = "REBOOT"

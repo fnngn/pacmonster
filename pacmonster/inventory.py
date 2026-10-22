@@ -1,6 +1,5 @@
 from .models import SystemTarget
 import socket
-import socket
 from .discovery import discover_lxc
 from .discovery import discover_vm
 from .discovery import get_host_distro
@@ -40,9 +39,16 @@ def build_inventory():
             if lxc["status"] == "running":
 
                 distro = get_lxc_distro(lxc["id"])
+                package_manager = get_package_manager(distro)
 
-                if distro == "arch":
+                if package_manager == "pacman":
                     caps = detect_arch_capabilities(lxc["id"])
+                elif package_manager != "unknown":
+                    caps = {
+                        "package_manager": package_manager,
+                        "can_check_updates": True,
+                        "can_upgrade": True
+                    }
 
             inventory.append(
                 SystemTarget(
