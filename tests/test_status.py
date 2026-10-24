@@ -68,6 +68,88 @@ class PackageUpdatesTests(unittest.TestCase):
         self.assertEqual(exit_error.exception.code, 130)
         self.assertIn("Cancellation requested", stderr.getvalue())
 
+    def test_ghosthunter_launches_tui_update_mode(self):
+        with (
+            patch.object(cli_main, "_tui_command", return_value=["/usr/bin/pacmonster-tui"]),
+            patch.object(
+                cli_main.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0),
+            ) as run_tui,
+        ):
+            cli_main.ghosthunter_command()
+
+        run_tui.assert_called_once_with(
+            ["/usr/bin/pacmonster-tui", "--run-updates"],
+            check=False,
+        )
+
+    def test_ghosthunter_reports_missing_tui(self):
+        stderr = StringIO()
+        with (
+            patch.object(
+                cli_main,
+                "_tui_command",
+                side_effect=FileNotFoundError("TUI unavailable"),
+            ),
+            redirect_stderr(stderr),
+        ):
+            with self.assertRaises(SystemExit) as exit_error:
+                cli_main.ghosthunter_command()
+
+        self.assertEqual(exit_error.exception.code, 4)
+        self.assertIn("TUI unavailable", stderr.getvalue())
+
+    def test_ghosthunter_finds_tui_built_from_its_project_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tui_root = Path(directory)
+            executable = tui_root / "target" / "debug" / "pacmonster-tui"
+            executable.parent.mkdir(parents=True)
+            (tui_root / "Cargo.toml").touch()
+            executable.touch()
+            executable.chmod(0o755)
+            with (
+                patch.object(cli_main.Path, "cwd", return_value=tui_root),
+                patch.object(cli_main.shutil, "which", return_value=None),
+            ):
+                command = cli_main._tui_command()
+
+        self.assertEqual(command, [str(executable)])
+
+    def test_ghosthunter_falls_back_to_cargo_run_from_source_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            (project_root / "tui").mkdir()
+            (project_root / "tui" / "Cargo.toml").touch()
+            with (
+                patch.object(cli_main.Path, "cwd", return_value=project_root),
+                patch.object(
+                    cli_main,
+                    "__file__",
+                    str(project_root / "pacmonster" / "main.py"),
+                ),
+                patch.object(
+                    cli_main.shutil,
+                    "which",
+                    side_effect=lambda command: (
+                        "/usr/bin/cargo" if command == "cargo" else None
+                    ),
+                ),
+            ):
+                command = cli_main._tui_command()
+
+        self.assertEqual(
+            command,
+            [
+                "/usr/bin/cargo",
+                "run",
+                "--quiet",
+                "--manifest-path",
+                str(project_root / "tui" / "Cargo.toml"),
+                "--",
+            ],
+        )
+
     def test_librarian_reports_corrupt_snapshot_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             snapshot_directory = Path(directory) / "damaged"
@@ -77,6 +159,14 @@ class PackageUpdatesTests(unittest.TestCase):
             with patch.object(librarian, "SNAPSHOT_ROOT", Path(directory)):
                 with self.assertRaises(librarian.SnapshotError):
                     librarian.list_snapshots()
+
+    def test_librarian_explains_root_requirement_for_system_snapshot_store(self):
+        with (
+            patch.object(librarian, "SNAPSHOT_ROOT", Path("/var/lib/pacmonster/snapshots")),
+            patch.object(librarian.os, "geteuid", return_value=1000),
+        ):
+            with self.assertRaisesRegex(librarian.SnapshotError, "sudo pacmonster"):
+                librarian._require_snapshot_root()
 
     def test_librarian_deduplicates_identical_package_archives(self):
         with tempfile.TemporaryDirectory() as directory:

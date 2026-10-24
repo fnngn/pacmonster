@@ -39,6 +39,12 @@ class SnapshotError(RuntimeError):
 def _require_snapshot_root():
     """Create the snapshot store or fail with an actionable permission error."""
 
+    if os.geteuid() != 0 and SNAPSHOT_ROOT == Path("/var/lib/pacmonster/snapshots"):
+        raise SnapshotError(
+            f"Snapshot storage requires root access ({SNAPSHOT_ROOT}); "
+            "run updates with `sudo pacmonster`."
+        )
+
     try:
         SNAPSHOT_ROOT.mkdir(parents=True, exist_ok=True)
     except OSError as error:

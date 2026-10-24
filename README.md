@@ -158,6 +158,12 @@ Install the system-wide CLI (the installer requests `sudo` if needed):
 ./install.sh
 ```
 
+The installer checks for a native C compiler, installs the platform build
+tools if needed, ensures Rust/Cargo 1.85 or newer is available, builds the
+TUI, installs `pacmonster-tui`, and prepares the root-owned package snapshot
+store. If a suitable system Rust toolchain is unavailable, it bootstraps the
+official stable toolchain through rustup.
+
 Verify the installation:
 
 ```bash
@@ -371,18 +377,46 @@ Ghost Pool
 ᗣ G04 arch-template
 ```
 
-Launch:
+The TUI builds with Rust/Cargo **1.85 or newer**; Proxmox utilities are not
+needed to compile or open the dashboard. Install a Rust toolchain if `cargo`
+is not available, then build from the repository:
 
 ```bash
 cd tui
+cargo --version
+cargo build
 cargo run
 ```
 
-Quit:
+`cargo run` opens the dashboard without starting updates. To test the full
+update flow directly from the checkout, run:
 
-```text
-q
+```bash
+cargo run -- --run-updates
 ```
+
+When the `pacmonster` command is installed, the TUI uses it. Otherwise a TUI
+built from this checkout runs the Python module from the repository source.
+Install the optimized executable for the `ghosthunter` CLI command:
+
+```bash
+cargo build --release
+sudo install -m 755 target/release/pacmonster-tui /usr/local/bin/pacmonster-tui
+```
+
+Start the update workflow inside the TUI:
+
+```bash
+sudo pacmonster ghosthunter
+```
+
+Ghosthunter starts `pacmonster update --yes`, so it does not stop at the
+interactive `Continue update run?` confirmation. It streams the update output
+into the dashboard and asks whether to exit after all targets finish. During a
+run, `q` or `Ctrl+C` requests an interrupt and lets Pacmonster stop
+package-manager processes safely. The update workflow itself requires a Linux
+host with a supported package manager; LXC discovery and updates require
+Proxmox's `pct` command.
 
 ---
 
@@ -537,6 +571,12 @@ Dashboard:
 cd tui
 cargo build
 cargo run
+```
+
+Run the update workflow from the source checkout:
+
+```bash
+cargo run -- --run-updates
 ```
 
 ---

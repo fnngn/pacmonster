@@ -1,5 +1,9 @@
 import sys
 import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
 
 from .inventory import build_inventory
 from .cache import load_inventory_cache
@@ -396,6 +400,65 @@ def update_command(assume_yes=False):
     sys.exit(0)
 
 
+def _tui_command():
+    """Find the installed or locally built Pacmonster TUI executable."""
+
+    configured_path = os.environ.get("PACMONSTER_TUI")
+    if configured_path:
+        executable = Path(configured_path).expanduser()
+        if executable.is_file() and os.access(executable, os.X_OK):
+            return [str(executable)]
+        raise FileNotFoundError(f"PACMONSTER_TUI is not an executable file: {executable}")
+
+    installed = shutil.which("pacmonster-tui")
+    if installed:
+        return [installed]
+
+    roots = (Path.cwd(), Path(__file__).resolve().parents[1])
+    seen = set()
+    for root in roots:
+        target_roots = [root / "tui" / "target"]
+        if (root / "Cargo.toml").is_file():
+            target_roots.append(root / "target")
+        for target_root in target_roots:
+            for profile in ("debug", "release"):
+                executable = target_root / profile / "pacmonster-tui"
+                if executable in seen:
+                    continue
+                seen.add(executable)
+                if executable.is_file() and os.access(executable, os.X_OK):
+                    return [str(executable)]
+
+    cargo = shutil.which("cargo")
+    for root in roots:
+        manifests = (root / "Cargo.toml", root / "tui" / "Cargo.toml")
+        for manifest in manifests:
+            if cargo and manifest.is_file():
+                return [cargo, "run", "--quiet", "--manifest-path", str(manifest), "--"]
+    raise FileNotFoundError(
+        "Pacmonster TUI was not found. Build it with "
+        "`cd tui && cargo build`, or install `pacmonster-tui` on PATH."
+    )
+
+
+def ghosthunter_command():
+    """Launch the TUI and run all planned updates without a confirmation prompt."""
+
+    try:
+        command = [*_tui_command(), "--run-updates"]
+    except FileNotFoundError as error:
+        print(f"Cannot start Ghosthunter: {error}", file=sys.stderr)
+        sys.exit(4)
+
+    try:
+        result = subprocess.run(command, check=False)
+    except OSError as error:
+        print(f"Cannot start Ghosthunter TUI: {error}", file=sys.stderr)
+        sys.exit(4)
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+
+
 
 def history_command(json_output=False):
     """Display saved update and maintenance history."""
@@ -429,6 +492,7 @@ def help_command():
     print("doctor")
     print("dry-run")
     print("update")
+    print("ghosthunter")
     print("history")
     print("librarian list")
     print("librarian snapshot [TARGET_ID]")
@@ -466,6 +530,8 @@ def _dispatch():
     elif cmd == "update":
         assume_yes = "--yes" in sys.argv
         update_command(assume_yes)
+    elif cmd == "ghosthunter":
+        ghosthunter_command()
     elif cmd == "history":
         json_output = "--json" in sys.argv
         history_command(json_output)
