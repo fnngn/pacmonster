@@ -3,6 +3,8 @@ import re
 
 
 def run(cmd):
+    """Run a shell command and return stripped standard output."""
+
     result = subprocess.run(
         cmd,
         shell=True,
@@ -14,6 +16,7 @@ def run(cmd):
 
 
 def get_host_distro():
+    """Read the host distribution ID from /etc/os-release."""
 
     try:
         with open("/etc/os-release") as f:
@@ -35,6 +38,7 @@ def get_host_distro():
 
 
 def discover_lxc():
+    """Return LXC IDs, states, and names reported by ``pct list``."""
 
     output = run("pct list")
 
@@ -68,6 +72,7 @@ def discover_lxc():
 
 
 def discover_vm():
+    """Return VM IDs, names, and states reported by ``qm list``."""
 
     output = run("qm list")
 
@@ -101,6 +106,7 @@ def discover_vm():
 
 
 def get_lxc_distro(vmid):
+    """Read the distribution ID from the given container's os-release file."""
 
     cmd = f"pct exec {vmid} -- cat /etc/os-release"
 
@@ -119,6 +125,7 @@ def get_lxc_distro(vmid):
 
 
 def get_package_manager(distro):
+    """Map a supported distribution ID to its native package manager."""
 
     if distro in ("debian", "ubuntu", "proxmox"):
         return "apt"

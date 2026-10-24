@@ -8,6 +8,7 @@ HISTORY_FILE = CACHE_DIR / "history.json"
 
 
 def load_history():
+    """Return the saved history, or an empty list when no file exists."""
 
     if not HISTORY_FILE.exists():
         return []
@@ -17,6 +18,7 @@ def load_history():
 
 
 def add_history(event_type, details=None):
+    """Append an event to history and retain only the latest 100 entries."""
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 

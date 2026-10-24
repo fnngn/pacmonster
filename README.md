@@ -52,7 +52,7 @@ Pacmonster provides a consistent operational interface for maintaining heterogen
 
 # Current Status
 
-Current release: **0.9.1**.
+Current release: **0.9.11**.
 
 Implemented:
 

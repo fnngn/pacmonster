@@ -18,6 +18,8 @@ CRITICAL_PACKAGES = [
 
 
 def run(command):
+    """Run an argument-list command and capture its output and exit status."""
+
     return subprocess.run(
         command,
         text=True,
@@ -26,6 +28,11 @@ def run(command):
 
 
 def package_updates(package_manager, target_id=None):
+    """Return pending package updates, or None if the query is unsupported or failed.
+
+    When target_id is provided, run the package-manager query inside that LXC.
+    """
+
     commands = {
         "apt": ["apt", "list", "--upgradable"],
         "pacman": ["pacman", "-Qu"],
@@ -69,6 +76,7 @@ def package_updates(package_manager, target_id=None):
 
 
 def build_status(inventory):
+    """Query each host or container, cache the resulting state, and return it."""
 
     status = []
 

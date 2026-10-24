@@ -19,12 +19,18 @@ GHOSTS = 4
 
 
 class ActionRunner:
+    """Run package-manager commands and stop their process groups on request."""
+
     def __init__(self):
+        """Initialize process tracking for one update run."""
+
         self._lock = threading.Lock()
         self._processes = set()
         self._stopping = False
 
     def execute(self, action):
+        """Run one planned action and return its exit status and duration."""
+
         started = time.perf_counter()
 
         with self._lock:
@@ -56,6 +62,8 @@ class ActionRunner:
         }
 
     def stop(self):
+        """Stop active commands gracefully, escalating if they do not exit."""
+
         with self._lock:
             self._stopping = True
             processes = tuple(self._processes)
@@ -84,6 +92,8 @@ class ActionRunner:
 
     @staticmethod
     def _wait_for_exit(processes, timeout):
+        """Wait up to timeout seconds for all processes to exit."""
+
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if all(process.poll() is not None for process in processes):
@@ -92,10 +102,13 @@ class ActionRunner:
 
 
 def execute_action(action, runner):
+    """Execute one scheduler action through the shared action runner."""
+
     return runner.execute(action)
 
 
 def build_dry_run():
+    """Build package-update actions for supported running hosts and LXCs."""
 
     from .inventory import build_inventory
 
@@ -148,6 +161,7 @@ def build_dry_run():
 
 
 def confirm_critical_updates(actions, assume_yes=False):
+    """Return whether to proceed, prompting unless assume_yes is enabled."""
 
     if assume_yes:
         return True
@@ -160,6 +174,10 @@ def confirm_critical_updates(actions, assume_yes=False):
     return answer.lower() == "y"
 
 def perform_update(assume_yes=False):
+    """Run planned updates in parallel and return results or a control status.
+
+    The update lock is held for the entire run and released on every exit path.
+    """
 
     if not acquire_lock():
         return "LOCKED"

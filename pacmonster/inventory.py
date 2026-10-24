@@ -14,6 +14,8 @@ MAX_DISCOVERY_WORKERS = 8
 
 
 def build_lxc_target(lxc):
+    """Detect one container's distribution and return its inventory record."""
+
     try:
         distro = "unknown"
         caps = detect_unknown_capabilities()
@@ -51,6 +53,7 @@ def build_lxc_target(lxc):
 
 
 def build_inventory():
+    """Discover hosts, containers, and VMs, then save the inventory cache."""
 
     inventory = []
 

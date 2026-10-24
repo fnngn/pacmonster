@@ -14,6 +14,7 @@ class GhostPool:
     """Manage ghost allocation and release."""
 
     def __init__(self, max_ghosts: int):
+        """Create a pool with the given number of initially idle slots."""
 
         self.max_ghosts = max_ghosts
 
@@ -24,7 +25,7 @@ class GhostPool:
 
     @property
     def active(self) -> int:
-        """Return active ghost count."""
+        """Return the number of currently assigned ghosts."""
 
         return sum(
             ghost.busy
@@ -33,13 +34,13 @@ class GhostPool:
 
     @property
     def idle(self) -> int:
-        """Return idle ghost count."""
+        """Return the number of currently unassigned ghosts."""
 
         return self.max_ghosts - self.active
 
     @property
     def available(self) -> int:
-        """Return available ghost count."""
+        """Return the number of ghosts available for another target."""
 
         return sum(
             not ghost.busy
@@ -47,12 +48,12 @@ class GhostPool:
         )
 
     def has_capacity(self) -> bool:
-        """Return True if a ghost can be allocated."""
+        """Return whether at least one ghost can be allocated."""
 
         return self.available > 0
 
     def allocate(self, target: str) -> Ghost | None:
-        """Allocate a free ghost."""
+        """Assign a free ghost to target, or return None when the pool is full."""
 
         for ghost in self.ghosts:
 
@@ -66,7 +67,7 @@ class GhostPool:
         return None
 
     def release(self, ghost_id: int) -> None:
-        """Release an allocated ghost."""
+        """Mark the identified ghost idle and clear its assigned target."""
 
         for ghost in self.ghosts:
 
@@ -78,7 +79,7 @@ class GhostPool:
                 return
 
     def snapshot(self) -> dict:
-        """Return current pool state."""
+        """Return a serializable snapshot of capacity and ghost assignments."""
 
         active = self.active
 

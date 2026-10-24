@@ -3,6 +3,8 @@ from dataclasses import dataclass
 
 @dataclass
 class SystemTarget:
+    """Describe a discovered host, container, or virtual machine."""
+
     id: str
     name: str
     kind: str

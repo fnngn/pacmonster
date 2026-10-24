@@ -9,7 +9,7 @@ STATE_FILE = RUNTIME_DIR / f"pacmonster-state-{os.geteuid()}.json"
 
 
 def write_event(event: dict):
-    """Write an event to JSONL."""
+    """Append one event as a JSON line to the current user's runtime log."""
 
     with EVENT_LOG.open("a") as handle:
         handle.write(
@@ -18,7 +18,7 @@ def write_event(event: dict):
 
 
 def emit_ghost_event(event: str, ghost, target=None):
-    """Emit a ghost lifecycle event."""
+    """Log and print a ghost assignment or release event."""
 
     write_event({
         "event": event,
@@ -39,7 +39,7 @@ def emit_ghost_event(event: str, ghost, target=None):
         )
 
 def write_state(snapshot: dict):
-    """Write current pool state."""
+    """Persist a serializable GhostPool snapshot to the runtime state file."""
 
     with STATE_FILE.open("w") as handle:
         json.dump(
@@ -51,7 +51,7 @@ def write_state(snapshot: dict):
 
 
 def emit_pool_event(pool):
-    """Emit current pool state."""
+    """Persist and log the pool snapshot, then print its active and idle counts."""
 
     snapshot = pool.snapshot()
     write_state(snapshot)

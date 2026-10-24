@@ -13,6 +13,7 @@ from .history import load_history
 
 
 def render_inventory(data):
+    """Print inventory records in aligned columns."""
 
     print()
     print("PACMONSTER INVENTORY")
@@ -46,6 +47,7 @@ def render_inventory(data):
 
 
 def render_status(data):
+    """Print a compact status table for discovered systems."""
 
     print()
     print("PACMONSTER STATUS")
@@ -78,6 +80,7 @@ def render_status(data):
 
 
 def render_status_verbose(data):
+    """Print detailed status information, including pending package names."""
 
     print()
     print("PACMONSTER STATUS (VERBOSE)")
@@ -107,12 +110,16 @@ def render_status_verbose(data):
 
 
 def refresh_command():
+    """Rebuild and cache inventory, then record the refresh in history."""
+
     inventory = build_inventory()
     add_history("refresh", {"objects": len(inventory)})
     print(f"Inventory cache updated: {len(inventory)} objects")
 
 
 def refresh_status_command():
+    """Refresh inventory and package status, then record a history summary."""
+
     inventory = build_inventory()
     status = build_status(inventory)
 
@@ -138,6 +145,8 @@ def refresh_status_command():
 
 
 def inventory_command(json_output=False):
+    """Display cached inventory as a table or JSON."""
+
     cache = load_inventory_cache()
 
     if cache is None:
@@ -151,6 +160,7 @@ def inventory_command(json_output=False):
     render_inventory(cache["inventory"])
 
 def status_command(verbose=False, json_output=False):
+    """Display cached status in compact, verbose, or JSON form."""
 
     cache = load_status_cache()
 
@@ -169,6 +179,8 @@ def status_command(verbose=False, json_output=False):
 
 
 def doctor_command(json_output=False):
+    """Run environment checks and display their results."""
+
     results = run_doctor()
 
     if json_output:
@@ -190,6 +202,8 @@ def doctor_command(json_output=False):
 
 
 def dry_run_command(json_output=False):
+    """Display planned package-manager commands without executing them."""
+
     actions = build_dry_run()
 
     if json_output:
@@ -209,6 +223,8 @@ def dry_run_command(json_output=False):
 
 
 def update_command(assume_yes=False):
+    """Run updates and translate scheduler outcomes into CLI exit codes."""
+
     result = perform_update(assume_yes)
 
     if result == "LOCKED":
@@ -250,6 +266,8 @@ def update_command(assume_yes=False):
 
 
 def history_command(json_output=False):
+    """Display saved update and maintenance history."""
+
     history = load_history()
 
     if json_output:
@@ -269,6 +287,8 @@ def history_command(json_output=False):
         print()
         print()
 def help_command():
+    """Print the supported CLI command names."""
+
     print("refresh")
     print("refresh-status")
     print("inventory")
@@ -281,6 +301,8 @@ def help_command():
 
 
 def main():
+    """Dispatch the command selected from the process command line."""
+
     if len(sys.argv) < 2:
         update_command()
         return

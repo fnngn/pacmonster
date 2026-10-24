@@ -2,6 +2,8 @@ import subprocess
 
 
 def run(cmd):
+    """Execute a shell command and return its completed-process result."""
+
     return subprocess.run(
         cmd,
         shell=True,
@@ -11,6 +13,7 @@ def run(cmd):
 
 
 def detect_arch_capabilities(vmid):
+    """Check whether an Arch container can query and apply package updates."""
 
     result = run(
         f"pct exec {vmid} -- pacman -Qu"
@@ -26,6 +29,7 @@ def detect_arch_capabilities(vmid):
 
 
 def detect_unknown_capabilities():
+    """Return disabled package capabilities for an unsupported distribution."""
 
     return {
         "package_manager": "unknown",

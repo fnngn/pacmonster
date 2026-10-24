@@ -6,10 +6,13 @@ LOCK_FILE = LOCK_DIR / "update.lock"
 
 
 def is_locked():
+    """Return whether the update lock file currently exists."""
+
     return LOCK_FILE.exists()
 
 
 def acquire_lock():
+    """Create the update lock and return False if another run owns it."""
 
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -22,6 +25,7 @@ def acquire_lock():
 
 
 def release_lock():
+    """Remove the update lock if it exists."""
 
     if LOCK_FILE.exists():
         LOCK_FILE.unlink()

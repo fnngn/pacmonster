@@ -5,6 +5,7 @@ from .cache import load_status_cache
 
 
 def command_exists(cmd):
+    """Return whether a command can be resolved by the current shell."""
 
     result = subprocess.run(
         f"command -v {cmd}",
@@ -16,6 +17,7 @@ def command_exists(cmd):
 
 
 def run_doctor():
+    """Collect basic checks for caches and Proxmox command availability."""
 
     checks = []
 

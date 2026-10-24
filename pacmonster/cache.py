@@ -10,6 +10,7 @@ STATUS_CACHE = CACHE_DIR / "status.json"
 
 
 def load_inventory_cache():
+    """Load the saved inventory, or return None when no cache exists."""
 
     if not INVENTORY_CACHE.exists():
         return None
@@ -19,6 +20,7 @@ def load_inventory_cache():
 
 
 def save_inventory_cache(data):
+    """Persist inventory data as formatted JSON in the user cache directory."""
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -27,6 +29,7 @@ def save_inventory_cache(data):
 
 
 def load_status_cache():
+    """Load the saved status snapshot, or return None when absent."""
 
     if not STATUS_CACHE.exists():
         return None
@@ -36,6 +39,7 @@ def load_status_cache():
 
 
 def save_status_cache(data):
+    """Save status data with its generation timestamp."""
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
