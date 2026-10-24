@@ -52,7 +52,7 @@ Pacmonster provides a consistent operational interface for maintaining heterogen
 
 # Current Status
 
-Current release: **0.9.32**.
+Current release: **0.9.4** (CLI and TUI).
 
 Implemented:
 
@@ -113,6 +113,7 @@ GhostPool Scheduler
 - Interactive updates
 - Unattended updates
 - Doctor diagnostics
+- Interactive Doctor diagnostics (`witchdoctor`)
 - Proxmox-aware discovery
 - Cron-friendly exit codes
 
@@ -221,9 +222,11 @@ sudo pacmonster status --verbose
 sudo pacmonster dry-run
 sudo pacmonster history
 sudo pacmonster doctor
+sudo pacmonster witchdoctor
 ```
 
 `dry-run` prints the planned update commands without executing them.
+`witchdoctor` opens Doctor diagnostics in the interactive TUI.
 
 ## Package snapshots and recovery
 
@@ -239,7 +242,7 @@ inside the container and avoids copying the archive to the host again. The
 three newest manifests per target are kept under
 `/var/lib/pacmonster/snapshots/`; blobs no longer referenced by a retained
 snapshot are removed.
-The doctor also runs the host package manager's native consistency check.
+Doctor also runs the host package manager's native consistency check.
 Snapshots require enough free disk space; check `sudo pacmonster doctor` for
 storage and archive availability.
 Long-running snapshot creation reports package and archive progress. Press
@@ -362,7 +365,10 @@ Example:
 
 # Dashboard
 
-A lightweight Rust TUI provides live scheduler visibility. It reads the most recently updated state file for the current user or root.
+A lightweight Rust TUI provides live scheduler visibility and interactive
+Doctor diagnostics. Its text panes support `↑`/`↓`, `PgUp`/`PgDn`, and `Home`/
+`End`; the update view follows new output until you scroll away, and `End`
+resumes following.
 
 Current dashboard:
 
@@ -410,6 +416,12 @@ Start the update workflow inside the TUI:
 sudo pacmonster ghosthunter
 ```
 
+Open the Doctor diagnostics in the TUI:
+
+```bash
+sudo pacmonster witchdoctor
+```
+
 Ghosthunter starts `pacmonster update --yes`, so it does not stop at the
 interactive `Continue update run?` confirmation. It streams the update output
 into the dashboard and asks whether to exit after all targets finish. During a
@@ -417,6 +429,8 @@ run, `q` or `Ctrl+C` requests an interrupt and lets Pacmonster stop
 package-manager processes safely. The update workflow itself requires a Linux
 host with a supported package manager; LXC discovery and updates require
 Proxmox's `pct` command.
+Witchdoctor displays Doctor checks with colored PASS, WARN, SKIP, and FAIL
+statuses, then asks whether to exit when the diagnostic run completes.
 
 ---
 
@@ -541,7 +555,7 @@ The focus is operational simplicity.
 
 # Credits
 
-This maintenance work was completed with assistance from GitHub Copilot.
+Maintenance changes were made with assistance from GitHub Copilot.
 
 ---
 
@@ -573,10 +587,11 @@ cargo build
 cargo run
 ```
 
-Run the update workflow from the source checkout:
+Run the update or Doctor workflow from the source checkout:
 
 ```bash
 cargo run -- --run-updates
+cargo run -- --run-doctor
 ```
 
 ---

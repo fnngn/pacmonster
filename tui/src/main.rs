@@ -15,7 +15,8 @@ use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::layout::{Constraint, Direction, Layout};
-use ratatui::text::Line;
+use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Wrap};
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -33,6 +34,14 @@ struct StateFile {
     ghosts: Vec<StateGhost>,
 }
 
+#[derive(Clone, Debug, serde::Deserialize)]
+struct DoctorCheck {
+    name: String,
+    status: String,
+    detail: String,
+}
+
+/// Read the newest scheduler state file available to the current process.
 fn read_state() -> Option<StateFile> {
     let effective_uid = fs::read_to_string("/proc/self/status")
         .ok()?
@@ -58,29 +67,37 @@ fn read_state() -> Option<StateFile> {
         .map(|(_, state)| state)
 }
 
+/// Restore the terminal after normal exit or a panic.
 fn restore_terminal() {
     let _ = terminal::disable_raw_mode();
     let _ = execute!(io::stdout(), LeaveAlternateScreen);
 }
 
-fn forward_output<R: io::Read + Send + 'static>(stream: R, sender: Sender<String>) {
+/// Forward one child-process stream to the UI without blocking terminal input.
+fn forward_output<R: io::Read + Send + 'static>(
+    stream: R,
+    is_stdout: bool,
+    sender: Sender<(bool, String)>,
+) {
     thread::spawn(move || {
         for line in BufReader::new(stream).lines() {
             match line {
                 Ok(line) => {
-                    if sender.send(line).is_err() {
+                    if sender.send((is_stdout, line)).is_err() {
                         break;
                     }
                 }
                 Err(error) => {
-                    let _ = sender.send(format!("Could not read update output: {error}"));
+                    let _ = sender.send((false, format!("Could not read command output: {error}")));
                     break;
                 }
             }
         }
+        let _ = sender.send((is_stdout, "\0".to_string()));
     });
 }
 
+/// Report whether the process has an effective user ID of zero.
 fn is_root() -> io::Result<bool> {
     let status = fs::read_to_string("/proc/self/status")?;
     let uid_line = status
@@ -94,7 +111,8 @@ fn is_root() -> io::Result<bool> {
     Ok(effective_uid == "0")
 }
 
-fn authorize_updates() -> io::Result<bool> {
+/// Validate sudo credentials before starting a privileged maintenance command.
+fn authorize_root(action: &str) -> io::Result<bool> {
     if is_root()? {
         return Ok(true);
     }
@@ -102,24 +120,26 @@ fn authorize_updates() -> io::Result<bool> {
     let status = Command::new("sudo").arg("-v").status().map_err(|error| {
         io::Error::new(
             error.kind(),
-            format!("updates require root privileges; could not run `sudo -v`: {error}"),
+            format!("{action} requires root privileges; could not run `sudo -v`: {error}"),
         )
     })?;
     if status.success() {
         Ok(false)
     } else {
-        Err(io::Error::other(
-            "updates require root privileges; sudo authorization was not granted",
-        ))
+        Err(io::Error::other(format!(
+            "{action} requires root privileges; sudo authorization was not granted"
+        )))
     }
 }
 
+/// Find an executable by searching the current process PATH.
 fn find_executable(name: &str) -> Option<PathBuf> {
     env::split_paths(&env::var_os("PATH")?)
         .map(|directory| directory.join(name))
         .find(|path| path.is_file())
 }
 
+/// Locate the Python interpreter and install root for the current user's package.
 fn find_python_package() -> Option<(PathBuf, PathBuf)> {
     let output = Command::new("python3")
         .args([
@@ -142,8 +162,14 @@ fn find_python_package() -> Option<(PathBuf, PathBuf)> {
     Some((PathBuf::from(&lines[0]), PathBuf::from(&lines[1])))
 }
 
-fn start_update(sender: &Sender<String>) -> io::Result<Child> {
-    let running_as_root = authorize_updates()?;
+/// Start the selected Pacmonster command and stream its output to the UI.
+fn start_command(sender: &Sender<(bool, String)>, mode: &str) -> io::Result<Child> {
+    let arguments: &[&str] = match mode {
+        "updates" => &["update", "--yes"],
+        "doctor" => &["doctor", "--json"],
+        _ => return Err(io::Error::other(format!("unsupported TUI mode: {mode}"))),
+    };
+    let running_as_root = authorize_root(mode)?;
     let source_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .map(PathBuf::from)
@@ -204,7 +230,7 @@ fn start_update(sender: &Sender<String>) -> io::Result<Child> {
         ));
     };
     command
-        .args(["update", "--yes"])
+        .args(arguments)
         .env("PYTHONUNBUFFERED", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -212,14 +238,15 @@ fn start_update(sender: &Sender<String>) -> io::Result<Child> {
     let mut child = command.spawn()?;
 
     if let Some(stdout) = child.stdout.take() {
-        forward_output(stdout, sender.clone());
+        forward_output(stdout, true, sender.clone());
     }
     if let Some(stderr) = child.stderr.take() {
-        forward_output(stderr, sender.clone());
+        forward_output(stderr, false, sender.clone());
     }
     Ok(child)
 }
 
+/// Send an interrupt request to the active maintenance process.
 fn interrupt_update(child: &Child) -> io::Result<()> {
     let process_id = child.id().to_string();
     let status = Command::new("kill")
@@ -234,32 +261,65 @@ fn interrupt_update(child: &Child) -> io::Result<()> {
     }
 }
 
+/// Move the viewport by a signed number of rows without leaving its bounds.
+fn move_scroll(current: u16, maximum: u16, delta: i32) -> u16 {
+    (i32::from(current) + delta).clamp(0, i32::from(maximum)) as u16
+}
+
+/// Estimate rendered rows for wrapped text at the current viewport width.
+fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
+    let width = usize::from(width.max(1));
+    lines
+        .iter()
+        .map(|line| line.width().max(1).div_ceil(width))
+        .sum()
+}
+
+/// Run the dashboard, optional maintenance command, and terminal event loop.
 fn main() -> io::Result<()> {
     std::panic::set_hook(Box::new(|panic| {
         restore_terminal();
         eprintln!("{panic}");
     }));
 
-    let run_updates = std::env::args().any(|argument| argument == "--run-updates");
-    let (output_sender, output_receiver): (Sender<String>, Receiver<String>) = mpsc::channel();
+    let mode = if std::env::args().any(|argument| argument == "--run-doctor") {
+        Some("doctor")
+    } else if std::env::args().any(|argument| argument == "--run-updates") {
+        Some("updates")
+    } else {
+        None
+    };
+    let (output_sender, output_receiver): (Sender<(bool, String)>, Receiver<(bool, String)>) =
+        mpsc::channel();
     let mut output = VecDeque::new();
+    let mut command_stdout = Vec::new();
+    let mut doctor_checks: Vec<DoctorCheck> = Vec::new();
     let mut child = None;
+    let mut child_finished = false;
+    let mut stdout_finished = false;
     let mut completion_prompt = false;
     let mut completion_status = String::new();
     let mut interrupt_requested = false;
+    let mut scroll_offset = 0u16;
+    let mut max_scroll = 0u16;
+    let mut page_size = 1u16;
+    let mut follow_output = true;
     let mut exit_code = 0;
 
-    if run_updates {
-        match start_update(&output_sender) {
-            Ok(update_child) => {
-                output.push_back("Starting all planned updates (--yes)...".to_string());
-                child = Some(update_child);
+    if let Some(mode) = mode {
+        match start_command(&output_sender, mode) {
+            Ok(command_child) => {
+                let description = match mode {
+                    "updates" => "Starting all planned updates (--yes)...",
+                    "doctor" => "Running Pacmonster Doctor diagnostics...",
+                    _ => unreachable!(),
+                };
+                output.push_back(description.to_string());
+                child = Some(command_child);
             }
             Err(error) => {
-                output.push_back(format!(
-                    "Could not start `pacmonster update --yes`: {error}"
-                ));
-                completion_status = "Update process could not be started.".to_string();
+                output.push_back(format!("Could not start Pacmonster {mode}: {error}"));
+                completion_status = format!("Pacmonster {mode} could not be started.");
                 completion_prompt = true;
                 exit_code = 4;
             }
@@ -275,7 +335,16 @@ fn main() -> io::Result<()> {
 
     let result = (|| -> io::Result<()> {
         loop {
-            while let Ok(line) = output_receiver.try_recv() {
+            while let Ok((is_stdout, line)) = output_receiver.try_recv() {
+                if line == "\0" {
+                    if is_stdout {
+                        stdout_finished = true;
+                    }
+                    continue;
+                }
+                if is_stdout {
+                    command_stdout.push(line.clone());
+                }
                 output.push_back(line);
                 if output.len() > 300 {
                     output.pop_front();
@@ -289,13 +358,117 @@ fn main() -> io::Result<()> {
             if let Some(status) = child_status {
                 child.take();
                 exit_code = status.code().unwrap_or(1);
-                completion_status =
-                    format!("Updates finished (exit code {exit_code}). Exit TUI? [y/N]");
+                child_finished = true;
+            }
+            if child_finished && (mode != Some("doctor") || stdout_finished) && !completion_prompt {
+                if mode == Some("doctor") {
+                    match serde_json::from_str::<Vec<DoctorCheck>>(&command_stdout.join("\n")) {
+                        Ok(checks) => doctor_checks = checks,
+                        Err(error) => output
+                            .push_back(format!("Could not parse Doctor results as JSON: {error}")),
+                    }
+                }
+                completion_status = match mode {
+                    Some("doctor") => {
+                        let failures = doctor_checks
+                            .iter()
+                            .filter(|check| check.status == "fail")
+                            .count();
+                        format!(
+                            "Doctor finished: {} checks, {failures} failures (exit code {exit_code}). Exit TUI? [y/N]",
+                            doctor_checks.len()
+                        )
+                    }
+                    _ => format!("Updates finished (exit code {exit_code}). Exit TUI? [y/N]"),
+                };
                 completion_prompt = true;
             }
 
             let state = read_state();
             terminal.draw(|frame| {
+                if mode == Some("doctor") {
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(2),
+                            Constraint::Min(3),
+                            Constraint::Length(2),
+                        ])
+                        .split(frame.area());
+                    let count_status = |status: &str| {
+                        doctor_checks
+                            .iter()
+                            .filter(|check| check.status == status)
+                            .count()
+                    };
+                    let summary = Line::from(vec![
+                        Span::styled(
+                            format!("WITCHDOCTOR  {} checks  ", doctor_checks.len()),
+                            Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!("PASS {}  ", count_status("ok")),
+                            Style::default().fg(Color::Green),
+                        ),
+                        Span::styled(
+                            format!("WARN {}  ", count_status("warning")),
+                            Style::default().fg(Color::Yellow),
+                        ),
+                        Span::styled(
+                            format!("SKIP {}  ", count_status("skip")),
+                            Style::default().fg(Color::Gray),
+                        ),
+                        Span::styled(
+                            format!("FAIL {}", count_status("fail")),
+                            Style::default().fg(Color::Red),
+                        ),
+                    ]);
+                    frame.render_widget(Paragraph::new(summary), chunks[0]);
+                    let mut lines: Vec<Line> = doctor_checks
+                        .iter()
+                        .flat_map(|check| {
+                            let (label, color) = match check.status.as_str() {
+                                "ok" => ("PASS", Color::Green),
+                                "warning" => ("WARN", Color::Yellow),
+                                "skip" => ("SKIP", Color::Gray),
+                                "fail" => ("FAIL", Color::Red),
+                                _ => ("????", Color::White),
+                            };
+                            vec![
+                                Line::from(vec![
+                                    Span::styled(format!("[{label}] "), Style::default().fg(color)),
+                                    Span::styled(
+                                        check.name.clone(),
+                                        Style::default().fg(Color::White),
+                                    ),
+                                ]),
+                                Line::from(format!("       {}", check.detail)),
+                                Line::from(""),
+                            ]
+                        })
+                        .collect();
+                    if doctor_checks.is_empty() {
+                        lines.extend(output.iter().cloned().map(Line::from));
+                    }
+                    max_scroll = wrapped_line_count(&lines, chunks[1].width)
+                        .saturating_sub(chunks[1].height as usize)
+                        .min(u16::MAX as usize) as u16;
+                    page_size = chunks[1].height.saturating_sub(1).max(1);
+                    if follow_output {
+                        scroll_offset = max_scroll;
+                    }
+                    scroll_offset = scroll_offset.min(max_scroll);
+                    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+                    frame.render_widget(paragraph.scroll((scroll_offset, 0)), chunks[1]);
+                    let footer = if completion_prompt {
+                        completion_status.as_str()
+                    } else {
+                        "↑/↓ PgUp/PgDn scroll • Home/End jump • q or Ctrl+C cancel/exit"
+                    };
+                    frame.render_widget(Paragraph::new(footer), chunks[2]);
+                    return;
+                }
+
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -338,27 +511,56 @@ fn main() -> io::Result<()> {
                     })
                     .unwrap_or_default();
                 log_lines.extend(output.iter().cloned().map(Line::from));
-                let visible_lines = chunks[1].height as usize;
-                let scroll = log_lines.len().saturating_sub(visible_lines) as u16;
-                frame.render_widget(
-                    Paragraph::new(log_lines)
-                        .wrap(Wrap { trim: true })
-                        .scroll((scroll, 0)),
-                    chunks[1],
-                );
+                max_scroll = wrapped_line_count(&log_lines, chunks[1].width)
+                    .saturating_sub(chunks[1].height as usize)
+                    .min(u16::MAX as usize) as u16;
+                page_size = chunks[1].height.saturating_sub(1).max(1);
+                if follow_output {
+                    scroll_offset = max_scroll;
+                }
+                scroll_offset = scroll_offset.min(max_scroll);
+                let paragraph = Paragraph::new(log_lines).wrap(Wrap { trim: true });
+                frame.render_widget(paragraph.scroll((scroll_offset, 0)), chunks[1]);
 
                 let footer = if completion_prompt {
                     completion_status.as_str()
                 } else if child.is_some() {
-                    "Updates running — press q or Ctrl+C to request a safe interrupt"
+                    "↑/↓ PgUp/PgDn scroll • Home/End jump • q or Ctrl+C requests safe interrupt"
                 } else {
-                    "Press q to quit"
+                    "↑/↓ PgUp/PgDn scroll • Home/End jump • q to quit"
                 };
                 frame.render_widget(Paragraph::new(footer), chunks[2]);
             })?;
 
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
+                    let navigation = match key.code {
+                        KeyCode::Up | KeyCode::Char('k') => Some(-1),
+                        KeyCode::Down | KeyCode::Char('j') => Some(1),
+                        KeyCode::PageUp => Some(-i32::from(page_size)),
+                        KeyCode::PageDown => Some(i32::from(page_size)),
+                        KeyCode::Home => {
+                            scroll_offset = 0;
+                            follow_output = false;
+                            Some(0)
+                        }
+                        KeyCode::End => {
+                            scroll_offset = max_scroll;
+                            follow_output = true;
+                            Some(0)
+                        }
+                        _ => None,
+                    };
+                    if let Some(delta) = navigation {
+                        scroll_offset = move_scroll(scroll_offset, max_scroll, delta);
+                        if scroll_offset < max_scroll {
+                            follow_output = false;
+                        } else if delta > 0 {
+                            follow_output = true;
+                        }
+                        continue;
+                    }
+
                     let wants_quit = key.code == KeyCode::Char('q')
                         || (key.code == KeyCode::Char('c')
                             && key.modifiers.contains(KeyModifiers::CONTROL));
@@ -367,10 +569,17 @@ fn main() -> io::Result<()> {
                             KeyCode::Char('y') | KeyCode::Char('Y') => break,
                             KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Enter => {
                                 completion_prompt = false;
-                                completion_status =
-                                    "Updates complete. Press q whenever you are ready to exit."
-                                        .to_string();
+                                completion_status = match mode {
+                                    Some("doctor") => {
+                                        "Diagnostics complete. Press q whenever you are ready to exit."
+                                    }
+                                    _ => {
+                                        "Updates complete. Press q whenever you are ready to exit."
+                                    }
+                                }
+                                .to_string();
                             }
+
                             KeyCode::Char('q') => break,
                             _ => {}
                         }
@@ -404,4 +613,23 @@ fn main() -> io::Result<()> {
         std::process::exit(exit_code);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{move_scroll, wrapped_line_count};
+    use ratatui::text::Line;
+
+    #[test]
+    fn scroll_offset_stays_within_content() {
+        assert_eq!(move_scroll(3, 10, -8), 0);
+        assert_eq!(move_scroll(8, 10, 5), 10);
+        assert_eq!(move_scroll(5, 5, 1), 5);
+    }
+
+    #[test]
+    fn wrapped_line_count_accounts_for_long_lines() {
+        let lines = vec![Line::from("123456"), Line::from("ab")];
+        assert_eq!(wrapped_line_count(&lines, 3), 3);
+    }
 }

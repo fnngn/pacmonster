@@ -441,22 +441,34 @@ def _tui_command():
     )
 
 
-def ghosthunter_command():
-    """Launch the TUI and run all planned updates without a confirmation prompt."""
+def _run_tui(mode):
+    """Launch the TUI in one of its privileged maintenance modes."""
 
     try:
-        command = [*_tui_command(), "--run-updates"]
+        command = [*_tui_command(), f"--run-{mode}"]
     except FileNotFoundError as error:
-        print(f"Cannot start Ghosthunter: {error}", file=sys.stderr)
+        print(f"Cannot start {mode}: {error}", file=sys.stderr)
         sys.exit(4)
 
     try:
         result = subprocess.run(command, check=False)
     except OSError as error:
-        print(f"Cannot start Ghosthunter TUI: {error}", file=sys.stderr)
+        print(f"Cannot start {mode} TUI: {error}", file=sys.stderr)
         sys.exit(4)
     if result.returncode != 0:
         sys.exit(result.returncode)
+
+
+def ghosthunter_command():
+    """Launch the TUI and run all planned updates without a confirmation prompt."""
+
+    _run_tui("updates")
+
+
+def witchdoctor_command():
+    """Launch the TUI and display structured system health checks."""
+
+    _run_tui("doctor")
 
 
 
@@ -493,6 +505,7 @@ def help_command():
     print("dry-run")
     print("update")
     print("ghosthunter")
+    print("witchdoctor")
     print("history")
     print("librarian list")
     print("librarian snapshot [TARGET_ID]")
@@ -532,6 +545,8 @@ def _dispatch():
         update_command(assume_yes)
     elif cmd == "ghosthunter":
         ghosthunter_command()
+    elif cmd == "witchdoctor":
+        witchdoctor_command()
     elif cmd == "history":
         json_output = "--json" in sys.argv
         history_command(json_output)

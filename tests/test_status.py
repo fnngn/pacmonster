@@ -100,6 +100,22 @@ class PackageUpdatesTests(unittest.TestCase):
         self.assertEqual(exit_error.exception.code, 4)
         self.assertIn("TUI unavailable", stderr.getvalue())
 
+    def test_witchdoctor_launches_tui_doctor_mode(self):
+        with (
+            patch.object(cli_main, "_tui_command", return_value=["/usr/bin/pacmonster-tui"]),
+            patch.object(
+                cli_main.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0),
+            ) as run_tui,
+        ):
+            cli_main.witchdoctor_command()
+
+        run_tui.assert_called_once_with(
+            ["/usr/bin/pacmonster-tui", "--run-doctor"],
+            check=False,
+        )
+
     def test_ghosthunter_finds_tui_built_from_its_project_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             tui_root = Path(directory)
