@@ -1,11 +1,15 @@
-import subprocess
 import os
+import signal
+import subprocess
+import threading
 import time
-
-from .cache import load_status_cache
-from .lock import acquire_lock
+from collections import deque
+from concurrent.futures import CancelledError
+from concurrent.futures import FIRST_COMPLETED
 from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import as_completed
+from concurrent.futures import wait
+
+from .lock import acquire_lock
 
 from .lock import release_lock
 from .events import emit_ghost_event
@@ -13,27 +17,82 @@ from .events import emit_pool_event
 from .ghost_pool import GhostPool
 GHOSTS = 4
 
-def execute_action(action):
 
-    started = time.perf_counter()
+class ActionRunner:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._processes = set()
+        self._stopping = False
 
-    result = subprocess.run(
-        action["command"],
-        shell=True,
-        text=True,
-        capture_output=True
-    )
+    def execute(self, action):
+        started = time.perf_counter()
 
-    duration = time.perf_counter() - started
+        with self._lock:
+            if self._stopping:
+                raise CancelledError("Update run was interrupted")
 
-    return {
-        "action": action,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-        "returncode": result.returncode,
-        "success": result.returncode == 0,
-        "duration": round(duration, 1)
-    }
+            process = subprocess.Popen(
+                action["command"],
+                shell=True,
+                text=True,
+                start_new_session=True
+            )
+            self._processes.add(process)
+
+        try:
+            returncode = process.wait()
+        finally:
+            with self._lock:
+                self._processes.discard(process)
+
+        duration = time.perf_counter() - started
+        return {
+            "action": action,
+            "stdout": "",
+            "stderr": "",
+            "returncode": returncode,
+            "success": returncode == 0,
+            "duration": round(duration, 1)
+        }
+
+    def stop(self):
+        with self._lock:
+            self._stopping = True
+            processes = tuple(self._processes)
+
+        for process in processes:
+            try:
+                os.killpg(process.pid, signal.SIGINT)
+            except ProcessLookupError:
+                pass
+
+        self._wait_for_exit(processes, timeout=5)
+        remaining = [process for process in processes if process.poll() is None]
+        for process in remaining:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+
+        self._wait_for_exit(remaining, timeout=2)
+        for process in remaining:
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    @staticmethod
+    def _wait_for_exit(processes, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if all(process.poll() is not None for process in processes):
+                return
+            time.sleep(0.1)
+
+
+def execute_action(action, runner):
+    return runner.execute(action)
 
 
 def build_dry_run():
@@ -119,99 +178,105 @@ def perform_update(assume_yes=False):
 
         pool = GhostPool(max_ghosts=GHOSTS)
         results = []
-        total = len(actions)
         failed = 0
+        runner = ActionRunner()
 
         print()
         print("PACMONSTER UPDATE")
         print()
-        futures = {}
 
         with ThreadPoolExecutor(max_workers=GHOSTS) as ghosts:
-
-            pending = list(actions)
+            pending = deque(actions)
             running = {}
+            interrupted = False
 
-            while pending or running:
+            try:
+                while pending or running:
+                    while pending and pool.has_capacity():
+                        action = pending.popleft()
+                        ghost = pool.allocate(action["name"])
 
-                while pending and pool.has_capacity():
+                        if ghost is None:
+                            break
 
-                    action = pending.pop(0)
-
-                    ghost = pool.allocate(action["name"])
-
-                    if ghost is not None:
-
-                        emit_ghost_event(
-                            "assigned",
-                            ghost,
-                            action["name"]
-                        )
-
+                        emit_ghost_event("assigned", ghost, action["name"])
                         emit_pool_event(pool)
 
+                        future = ghosts.submit(execute_action, action, runner)
+                        running[future] = {
+                            "ghost": ghost,
+                            "action": action,
+                            "started": time.perf_counter(),
+                        }
 
+                    if not running:
+                        continue
 
-                    if ghost is None:
-                        break
-
-                    future = ghosts.submit(
-                        execute_action,
-                        action
+                    completed, _ = wait(
+                        running,
+                        timeout=10,
+                        return_when=FIRST_COMPLETED
                     )
 
-                    running[future] = {
-                        "ghost": ghost,
-                        "action": action,
-                    }
+                    if not completed:
+                        now = time.perf_counter()
+                        for meta in running.values():
+                            elapsed = now - meta["started"]
+                            print(
+                                f"[{meta['action']['name']}] still running "
+                                f"({elapsed:.0f}s)",
+                                flush=True
+                            )
+                        continue
 
-                if not running:
-                    continue
+                    for completed_future in completed:
+                        meta = running.pop(completed_future)
+                        ghost = meta["ghost"]
+                        result = completed_future.result()
 
-                completed_future = next(
-                    as_completed(running)
-                )
+                        emit_ghost_event(
+                            "released",
+                            ghost,
+                            ghost.target
+                        )
 
-                meta = running.pop(
-                    completed_future
-                )
+                        pool.release(ghost.id)
+                        emit_pool_event(pool)
 
+                        if result["stdout"]:
+                            print(result["stdout"], end="")
+
+                        if result["stderr"]:
+                            print(result["stderr"], end="")
+
+                        print(f"Completed in {result['duration']:.1f}s")
+
+                        if not result["success"]:
+                            failed += 1
+
+                        action = result["action"]
+                        results.append({
+                            "id": action["id"],
+                            "name": action["name"],
+                            "success": result["success"],
+                            "returncode": result["returncode"],
+                            "duration": result["duration"]
+                        })
+            except KeyboardInterrupt:
+                print("\nInterrupt received; stopping running updates...")
+                pending.clear()
+                for future in running:
+                    future.cancel()
+                runner.stop()
+                interrupted = True
+
+        if interrupted:
+            for meta in running.values():
                 ghost = meta["ghost"]
-
-                result = completed_future.result()
-
-                emit_ghost_event(
-                    "released",
-                    ghost,
-                    ghost.target
-                )
-
+                emit_ghost_event("released", ghost, ghost.target)
                 pool.release(ghost.id)
-
                 emit_pool_event(pool)
-
-                if result["stdout"]:
-                    print(result["stdout"], end="")
-
-                if result["stderr"]:
-                    print(result["stderr"], end="")
-
-                print(
-                    f"Completed in {result['duration']:.1f}s"
-                )
-
-                if not result["success"]:
-                    failed += 1
-
-                action = result["action"]
-
-                results.append({
-                    "id": action["id"],
-                    "name": action["name"],
-                    "success": result["success"],
-                    "returncode": result["returncode"],
-                    "duration": result["duration"]
-                })
+            return "INTERRUPTED"
 
         total_duration = time.perf_counter() - started_total
 

@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 from .models import SystemTarget
 import socket
 from .discovery import discover_lxc
@@ -6,8 +8,46 @@ from .discovery import get_host_distro
 from .discovery import get_lxc_distro
 from .discovery import get_package_manager
 from .cache import save_inventory_cache
-from .capabilities import detect_arch_capabilities
 from .capabilities import detect_unknown_capabilities
+
+MAX_DISCOVERY_WORKERS = 8
+
+
+def build_lxc_target(lxc):
+    try:
+        distro = "unknown"
+        caps = detect_unknown_capabilities()
+
+        if lxc["status"] == "running":
+            distro = get_lxc_distro(lxc["id"])
+            package_manager = get_package_manager(distro)
+
+            if package_manager != "unknown":
+                caps = {
+                    "package_manager": package_manager,
+                    "can_check_updates": True,
+                    "can_upgrade": True
+                }
+
+        return SystemTarget(
+            id=lxc["id"],
+            name=lxc["name"],
+            kind="lxc",
+            distro=distro,
+            status=lxc["status"],
+            package_manager=caps["package_manager"],
+            can_check_updates=caps["can_check_updates"],
+            can_upgrade=caps["can_upgrade"]
+        )
+
+    except Exception:
+        return SystemTarget(
+            id=lxc["id"],
+            name=lxc["name"],
+            kind="lxc",
+            distro="error",
+            status="error"
+        )
 
 
 def build_inventory():
@@ -29,51 +69,12 @@ def build_inventory():
         )
     )
 
-    for lxc in discover_lxc():
-
-        try:
-
-            distro = "unknown"
-            caps = detect_unknown_capabilities()
-
-            if lxc["status"] == "running":
-
-                distro = get_lxc_distro(lxc["id"])
-                package_manager = get_package_manager(distro)
-
-                if package_manager == "pacman":
-                    caps = detect_arch_capabilities(lxc["id"])
-                elif package_manager != "unknown":
-                    caps = {
-                        "package_manager": package_manager,
-                        "can_check_updates": True,
-                        "can_upgrade": True
-                    }
-
-            inventory.append(
-                SystemTarget(
-                    id=lxc["id"],
-                    name=lxc["name"],
-                    kind="lxc",
-                    distro=distro,
-                    status=lxc["status"],
-                    package_manager=caps["package_manager"],
-                    can_check_updates=caps["can_check_updates"],
-                    can_upgrade=caps["can_upgrade"]
-                )
-            )
-
-        except Exception:
-
-            inventory.append(
-                SystemTarget(
-                    id=lxc["id"],
-                    name=lxc["name"],
-                    kind="lxc",
-                    distro="error",
-                    status="error"
-                )
-            )
+    lxcs = discover_lxc()
+    if lxcs:
+        with ThreadPoolExecutor(
+            max_workers=min(MAX_DISCOVERY_WORKERS, len(lxcs))
+        ) as workers:
+            inventory.extend(workers.map(build_lxc_target, lxcs))
 
     for vm in discover_vm():
 

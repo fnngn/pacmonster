@@ -219,6 +219,10 @@ def update_command(assume_yes=False):
         print("Update aborted.")
         sys.exit(2)
 
+    if result == "INTERRUPTED":
+        print("Update interrupted.")
+        sys.exit(130)
+
     if result is None:
         print("No status cache found.")
         sys.exit(4)

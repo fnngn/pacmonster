@@ -15,7 +15,7 @@ No database.
 Just:
 
 ```bash
-pacmonster update
+sudo pacmonster
 ```
 
 ---
@@ -46,23 +46,13 @@ pacmonster update
 
 # Mission
 
-Pacmonster provides a consistent operational interface for maintaining heterogeneous Linux environments.
-
-The project does not replace package managers.
-
-Instead it acts as an orchestration layer that translates maintenance actions into distribution-specific package manager operations.
-
-The long-term goal is a lightweight platform capable of managing small Linux landscapes through a unified workflow regardless of distribution.
+Pacmonster provides a consistent operational interface for maintaining heterogeneous Linux environments. It orchestrates native package managers rather than replacing them.
 
 ---
 
 # Current Status
 
-Version:
-
-```text
-v0.9
-```
+Current release: **0.9.1**.
 
 Implemented:
 
@@ -148,11 +138,7 @@ GhostPool Scheduler
 
 ## Virtual Machines
 
-Current status:
-
-- VM discovery available
-- VM updates not implemented
-- VM status not implemented
+VM discovery is available; VM status checks and updates are not implemented.
 
 ---
 
@@ -165,85 +151,80 @@ git clone https://github.com/fnngn/pacmonster.git
 cd pacmonster
 ```
 
-Install:
+Install the system-wide CLI (the installer requests `sudo` if needed):
 
 ```bash
 ./install.sh
 ```
 
-Verify installation:
+Verify the installation:
 
 ```bash
 sudo pacmonster help
 ```
 
-The installer uses `sudo` when needed and installs the command under `/usr/local/bin`, so it is available to `sudo` without depending on the user's `~/.local/bin`.
+The installer places the command in `/usr/local/bin`, so it is available as `sudo pacmonster` without relying on a user's `~/.local/bin`. Re-run the installer after changing the source code to update the installed copy.
+
+Pacmonster needs root privileges for host package updates and Proxmox container discovery. It also needs the relevant native package manager and, for Proxmox discovery, `pct` and `qm`.
 
 ---
 
 # Commands
 
-## Update
+## Update systems
 
-Interactive:
+Running Pacmonster without a subcommand starts an interactive update. Updates are real package-manager operations.
+
+Interactive update:
+
+```bash
+sudo pacmonster
+```
+
+Equivalent explicit command:
 
 ```bash
 sudo pacmonster update
 ```
 
-Unattended:
+Unattended update (does not prompt for confirmation):
 
 ```bash
 sudo pacmonster update --yes
 ```
 
-## Inventory
+## Inventory and status
 
 ```bash
 sudo pacmonster refresh
 sudo pacmonster inventory
-```
-
-## Status
-
-```bash
 sudo pacmonster refresh-status
 sudo pacmonster status
 ```
 
-Verbose:
+`inventory` and `status` display cached snapshots. Run `refresh` or `refresh-status` to update those caches. Add `--json` to either display command for JSON output; status also supports:
 
 ```bash
 sudo pacmonster status --verbose
 ```
 
-`inventory` and `status` display cached snapshots. Run the corresponding refresh command to discover systems or check for current package updates.
-
-## Dry Run
+## Other commands
 
 ```bash
 sudo pacmonster dry-run
-```
-
-## History
-
-```bash
 sudo pacmonster history
-```
-
-## Doctor
-
-```bash
 sudo pacmonster doctor
 ```
+
+`dry-run` prints the planned update commands without executing them.
 
 ---
 
 # GhostPool Scheduler
 
-Pacmonster executes updates through a fixed-size worker pool called GhostPool.
+Pacmonster executes updates through GhostPool, a worker pool with a maximum of four concurrent targets. Each Ghost is one execution slot. Targets are dispatched in FIFO order, and completed slots are reused until the queue is empty.
 
-Each Ghost represents one concurrent execution slot.
+Package-manager output is shown live. For quiet operations, Pacmonster prints a running-time heartbeat every 10 seconds.
 
 Lifecycle:
 
@@ -282,13 +263,13 @@ Runtime information is exported under:
 
 Event and state files include the effective user ID in their names so root and regular-user runs do not conflict over file ownership.
 
-## Event Stream
+## Event stream
 
 ```text
 /var/tmp/pacmonster-events-<uid>.jsonl
 ```
 
-Append-only scheduler event log.
+Append-only scheduler event log. `<uid>` is the effective user ID of the Pacmonster process.
 
 Example:
 
@@ -300,13 +281,13 @@ Example:
 }
 ```
 
-## Scheduler State
+## Scheduler state
 
 ```text
 /var/tmp/pacmonster-state-<uid>.json
 ```
 
-Current runtime snapshot.
+Current runtime snapshot, also separated by effective user ID.
 
 Example:
 
@@ -334,7 +315,7 @@ Example:
 
 # Dashboard
 
-A lightweight Rust TUI provides live scheduler visibility.
+A lightweight Rust TUI provides live scheduler visibility. It reads the most recently updated state file for the current user or root.
 
 Current dashboard:
 
@@ -364,7 +345,7 @@ q
 
 ---
 
-# Update Workflow
+# Update workflow
 
 ```text
 Inventory
@@ -415,6 +396,9 @@ dnf upgrade -y
 | 2 | User aborted |
 | 3 | Update lock active |
 | 4 | Runtime error |
+| 130 | Update interrupted with Ctrl+C |
+
+When interrupted, Pacmonster sends `SIGINT` to active package-manager process groups. If they do not exit, it escalates to `SIGTERM` and then `SIGKILL`.
 
 ---
 

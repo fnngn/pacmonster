@@ -80,9 +80,11 @@ class GhostPool:
     def snapshot(self) -> dict:
         """Return current pool state."""
 
+        active = self.active
+
         return {
-            "active": self.active,
-            "idle": self.idle,
+            "active": active,
+            "idle": self.max_ghosts - active,
             "capacity": self.max_ghosts,
             "ghosts": [
                 {

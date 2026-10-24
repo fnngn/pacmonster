@@ -6,7 +6,9 @@ pacmonster/cache.py
 pacmonster/capabilities.py
 pacmonster/discovery.py
 pacmonster/doctor.py
+pacmonster/events.py
 pacmonster/exceptions.py
+pacmonster/ghost_pool.py
 pacmonster/history.py
 pacmonster/inventory.py
 pacmonster/lock.py
@@ -23,3 +25,4 @@ pacmonster.egg-info/top_level.txt
 pacmonster/plugins/__init__.py
 pacmonster/plugins/arch.py
 pacmonster/plugins/debian.py
+tests/test_status.py

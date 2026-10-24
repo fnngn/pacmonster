@@ -38,12 +38,12 @@ def emit_ghost_event(event: str, ghost, target=None):
             f"[G{ghost.id:02}] released <- {target}"
         )
 
-def write_state(pool):
+def write_state(snapshot: dict):
     """Write current pool state."""
 
     with STATE_FILE.open("w") as handle:
         json.dump(
-            pool.snapshot(),
+            snapshot,
             handle,
             indent=2
         )
@@ -54,9 +54,7 @@ def emit_pool_event(pool):
     """Emit current pool state."""
 
     snapshot = pool.snapshot()
-
-    write_state(pool)
-
+    write_state(snapshot)
 
     write_event({
         "event": "pool",
