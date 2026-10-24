@@ -122,6 +122,66 @@ class PackageUpdatesTests(unittest.TestCase):
             self.assertFalse((root / "snapshots" / first["id"]).exists())
             self.assertEqual(package_query_run.call_count, 3)
 
+    def test_librarian_reuses_identical_archive_blob_from_another_lxc(self):
+        digest = "a" * 64
+        archive = {
+            "blob": f"{digest}.pkg.tar.zst",
+            "sha256": digest,
+            "bytes": 1024,
+            "new": False,
+        }
+        target = {"id": "102", "kind": "lxc"}
+        with patch.object(
+            librarian.subprocess,
+            "run",
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout=f"{digest}  /var/cache/pacman/pkg/demo-1.0.pkg.tar.zst\n",
+                stderr="",
+            ),
+        ) as run_command:
+            reused = librarian._reuse_remote_blob(
+                target,
+                "/var/cache/pacman/pkg/demo-1.0.pkg.tar.zst",
+                "demo",
+                "1.0",
+                {("demo", "1.0"): {digest: archive}},
+            )
+
+        self.assertEqual(reused, archive)
+        self.assertEqual(
+            run_command.call_args.args[0],
+            [
+                "pct", "exec", "102", "--",
+                "sha256sum", "--", "/var/cache/pacman/pkg/demo-1.0.pkg.tar.zst",
+            ],
+        )
+
+    def test_librarian_does_not_reuse_different_lxc_archive_content(self):
+        target = {"id": "102", "kind": "lxc"}
+        with patch.object(
+            librarian.subprocess,
+            "run",
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout=f"{'b' * 64}  /tmp/demo.pkg.tar.zst\n",
+                stderr="",
+            ),
+        ):
+            reused = librarian._reuse_remote_blob(
+                target,
+                "/tmp/demo.pkg.tar.zst",
+                "demo",
+                "1.0",
+                {
+                    ("demo", "1.0"): {
+                        "a" * 64: {"blob": "a" * 64 + ".pkg.tar.zst"}
+                    }
+                },
+            )
+
+        self.assertIsNone(reused)
+
     def test_librarian_keeps_only_three_snapshots_per_target(self):
         target = {
             "id": "host",

@@ -52,7 +52,7 @@ Pacmonster provides a consistent operational interface for maintaining heterogen
 
 # Current Status
 
-Current release: **0.9.2**.
+Current release: **0.9.3**.
 
 Implemented:
 
@@ -225,7 +225,12 @@ Before starting updates, Pacmonster's Librarian saves each target's installed
 package/version manifest and only the matching package archives needed for
 recovery. Archives are content-addressed and shared between snapshots: unchanged
 package files are stored once, while newly changed package files add only their
-own size. The three newest manifests per target are kept under
+own size. Identical archives from different LXC containers (or the host) also
+share a blob, but only after their content hashes match; matching package names
+and versions alone are not treated as proof that the files are identical. When
+a retained blob already matches an LXC package, Pacmonster verifies its hash
+inside the container and avoids copying the archive to the host again. The
+three newest manifests per target are kept under
 `/var/lib/pacmonster/snapshots/`; blobs no longer referenced by a retained
 snapshot are removed.
 The doctor also runs the host package manager's native consistency check.

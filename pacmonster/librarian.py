@@ -363,6 +363,7 @@ def _archive_cache(target, packages):
         )
         return stored
 
+    shared_blobs = _shared_blob_index(package_manager)
     exists = subprocess.run(
         ["pct", "exec", str(target["id"]), "--", "test", "-d", cache_directory],
         capture_output=True,
@@ -398,7 +399,18 @@ def _archive_cache(target, packages):
             continue
         package_name = _manifest_package_name(*identity, packages_to_find)
         if package_name is not None:
-            matching[package_name] = candidate
+            _, version, _ = identity
+            reused = _reuse_remote_blob(
+                target,
+                candidate,
+                package_name,
+                version,
+                shared_blobs,
+            )
+            if reused is not None:
+                stored[package_name] = reused
+            else:
+                matching[package_name] = candidate
         if index % 25 == 0 or index == len(candidates):
             print(
                 f"[{target['name']}] checking container cache "
@@ -428,6 +440,68 @@ def _archive_cache(target, packages):
                     flush=True,
                 )
     return stored
+
+
+def _shared_blob_index(package_manager):
+    """Index retained package blobs by manager, package name, and version."""
+
+    index = {}
+    blob_directory = SNAPSHOT_ROOT / "blobs"
+    for snapshot in list_snapshots():
+        if snapshot.get("target", {}).get("package_manager") != package_manager:
+            continue
+        packages = snapshot.get("packages", {})
+        archives = snapshot.get("archives", {})
+        for package_name, archive in archives.items():
+            if not isinstance(archive, dict):
+                continue
+            blob_name = archive.get("blob")
+            digest = archive.get("sha256")
+            version = packages.get(package_name)
+            if (
+                not isinstance(blob_name, str)
+                or Path(blob_name).name != blob_name
+                or not isinstance(digest, str)
+                or not re.fullmatch(r"[a-f0-9]{64}", digest)
+                or not blob_name.startswith(digest)
+                or not version
+            ):
+                continue
+            blob_path = blob_directory / blob_name
+            if (
+                not blob_path.is_file()
+                or blob_path.is_symlink()
+                or blob_path.stat().st_size != archive.get("bytes")
+            ):
+                continue
+            index.setdefault((package_name, version), {})[digest] = {
+                **archive,
+                "new": False,
+            }
+    return index
+
+
+def _reuse_remote_blob(target, remote_path, package_name, version, shared_blobs):
+    """Reuse an identical retained blob without pulling it from an LXC target."""
+
+    candidates = shared_blobs.get((package_name, version), {})
+    if not candidates:
+        return None
+    result = subprocess.run(
+        [
+            "pct", "exec", str(target["id"]), "--",
+            "sha256sum", "--", str(remote_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    fields = result.stdout.split(maxsplit=1)
+    if not fields:
+        return None
+    return candidates.get(fields[0])
 
 
 def _snapshot_id(target):
