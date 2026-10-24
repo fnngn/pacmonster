@@ -1,7 +1,7 @@
 import os
 import json
 import tempfile
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
 from pathlib import Path
@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from pacmonster import doctor, librarian, restaurator, update
+from pacmonster import main as cli_main
 from pacmonster.events import EVENT_LOG, STATE_FILE, write_event
 from pacmonster.inventory import build_inventory
 from pacmonster.models import SystemTarget
@@ -19,6 +20,54 @@ from pacmonster.status import build_status, package_updates
 
 
 class PackageUpdatesTests(unittest.TestCase):
+    def test_librarian_cleans_partial_snapshot_when_interrupted(self):
+        target = {
+            "id": "host",
+            "name": "host",
+            "kind": "host",
+            "package_manager": "pacman",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot_root = Path(directory)
+            with (
+                patch.object(librarian, "SNAPSHOT_ROOT", snapshot_root),
+                patch.object(librarian, "package_manifest", return_value={"demo": "1.0"}),
+                patch.object(librarian, "_archive_cache", side_effect=KeyboardInterrupt),
+                redirect_stdout(StringIO()),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    librarian.create_snapshot(target)
+
+            self.assertEqual(list(snapshot_root.iterdir()), [])
+
+    def test_librarian_removes_temporary_blob_if_storage_is_interrupted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "demo.pkg.tar.zst"
+            source.write_bytes(b"package data")
+            snapshot_root = root / "snapshots"
+            with (
+                patch.object(librarian, "SNAPSHOT_ROOT", snapshot_root),
+                patch.object(librarian.os, "link", side_effect=KeyboardInterrupt),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    librarian._store_archive_blob(source)
+
+            self.assertEqual(list((snapshot_root / "blobs").iterdir()), [])
+
+    def test_cli_reports_interrupt_without_traceback(self):
+        stderr = StringIO()
+        with (
+            patch.object(cli_main.sys, "argv", ["pacmonster", "refresh"]),
+            patch.object(cli_main, "build_inventory", side_effect=KeyboardInterrupt),
+            redirect_stderr(stderr),
+        ):
+            with self.assertRaises(SystemExit) as exit_error:
+                cli_main.main()
+
+        self.assertEqual(exit_error.exception.code, 130)
+        self.assertIn("Cancellation requested", stderr.getvalue())
+
     def test_librarian_reports_corrupt_snapshot_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             snapshot_directory = Path(directory) / "damaged"

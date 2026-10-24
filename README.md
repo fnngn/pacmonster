@@ -52,7 +52,7 @@ Pacmonster provides a consistent operational interface for maintaining heterogen
 
 # Current Status
 
-Current release: **0.9.3**.
+Current release: **0.9.32**.
 
 Implemented:
 
@@ -236,6 +236,9 @@ snapshot are removed.
 The doctor also runs the host package manager's native consistency check.
 Snapshots require enough free disk space; check `sudo pacmonster doctor` for
 storage and archive availability.
+Long-running snapshot creation reports package and archive progress. Press
+`Ctrl+C` to cancel; incomplete snapshot metadata and temporary package files are
+cleaned up, and Pacmonster exits with status 130.
 
 ```bash
 sudo pacmonster librarian list

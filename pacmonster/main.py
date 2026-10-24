@@ -437,7 +437,7 @@ def help_command():
     print("restaurator restore SNAPSHOT_ID [--yes]")
 
 
-def main():
+def _dispatch():
     """Dispatch the command selected from the process command line."""
 
     if len(sys.argv) < 2:
@@ -488,6 +488,16 @@ def main():
         )
     else:
         help_command()
+
+
+def main():
+    """Dispatch a command and exit cleanly when the user presses Ctrl+C."""
+
+    try:
+        _dispatch()
+    except KeyboardInterrupt:
+        print("\nCancellation requested; cleaning up and stopping.", file=sys.stderr, flush=True)
+        raise SystemExit(130) from None
 
 
 if __name__ == "__main__":

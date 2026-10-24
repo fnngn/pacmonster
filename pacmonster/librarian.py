@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -204,26 +205,45 @@ def _store_archive_blob(archive_path):
 
     blob_directory = SNAPSHOT_ROOT / "blobs"
     blob_directory.mkdir(parents=True, exist_ok=True)
-    digest = _sha256(archive_path)
+    digest = _sha256(archive_path, show_progress=True)
     blob_name = f"{digest}{''.join(archive_path.suffixes)}"
     blob_path = blob_directory / blob_name
     created = False
     if not blob_path.exists():
-        with tempfile.NamedTemporaryFile(
-            dir=blob_directory,
-            prefix=".package-",
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-            with archive_path.open("rb") as source:
-                shutil.copyfileobj(source, temporary)
+        temporary_path = None
         try:
+            with tempfile.NamedTemporaryFile(
+                dir=blob_directory,
+                prefix=".package-",
+                delete=False,
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                with archive_path.open("rb") as source:
+                    total_bytes = archive_path.stat().st_size
+                    copied_bytes = 0
+                    next_report = 256 * 1024**2
+                    while block := source.read(1024 * 1024):
+                        temporary.write(block)
+                        copied_bytes += len(block)
+                        if copied_bytes >= next_report and copied_bytes < total_bytes:
+                            print(
+                                f"Copying {archive_path.name}: "
+                                f"{copied_bytes / 1024**3:.1f}/"
+                                f"{total_bytes / 1024**3:.1f} GiB",
+                                file=sys.stderr,
+                                flush=True,
+                            )
+                            next_report += 256 * 1024**2
             os.link(temporary_path, blob_path)
             created = True
         except FileExistsError:
-            pass
+            if blob_path.exists():
+                pass
+            else:
+                raise
         finally:
-            temporary_path.unlink(missing_ok=True)
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
     return {
         "blob": blob_name,
         "sha256": digest,
@@ -320,6 +340,7 @@ def _archive_cache(target, packages):
         print(
             f"[{target['name']}] reusing all {len(stored)} package archives "
             "from the previous snapshot",
+            file=sys.stderr,
             flush=True,
         )
         return stored
@@ -343,22 +364,29 @@ def _archive_cache(target, packages):
             return stored
         total_bytes = sum(path.stat().st_size for path in matching.values())
         print(
-            f"[{target['name']}] checking {len(matching)} matching cached package "
-            f"archives ({total_bytes / 1024**3:.1f} GiB); reusing identical files",
+            f"[{target['name']}] saving {len(matching)} matching cached package "
+            f"archives ({total_bytes / 1024**3:.1f} GiB); press Ctrl+C to cancel",
+            file=sys.stderr,
             flush=True,
         )
         for index, (package_name, package_archive) in enumerate(matching.items(), start=1):
+            print(
+                f"[{target['name']}] saving {package_name} "
+                f"({package_archive.stat().st_size / 1024**2:.0f} MiB)",
+                file=sys.stderr,
+                flush=True,
+            )
             stored[package_name] = _store_archive_blob(package_archive)
-            if index % 25 == 0 or index == len(matching):
-                print(
-                    f"[{target['name']}] snapshot packages "
-                    f"{index}/{len(matching)}",
-                    flush=True,
-                )
+            print(
+                f"[{target['name']}] snapshot packages {index}/{len(matching)}",
+                file=sys.stderr,
+                flush=True,
+            )
         new_bytes = sum(item["bytes"] for item in stored.values() if item["new"])
         print(
             f"[{target['name']}] newly stored package data: "
             f"{new_bytes / 1024**3:.2f} GiB",
+            file=sys.stderr,
             flush=True,
         )
         return stored
@@ -394,6 +422,13 @@ def _archive_cache(target, packages):
     ]
     matching = {}
     for index, candidate in enumerate(candidates, start=1):
+        if index == 1 or index % 10 == 0:
+            print(
+                f"[{target['name']}] inspecting container cache "
+                f"{index}/{len(candidates)} candidates; press Ctrl+C to cancel",
+                file=sys.stderr,
+                flush=True,
+            )
         identity = _archive_identity_for_target(target, candidate)
         if identity is None:
             continue
@@ -411,12 +446,12 @@ def _archive_cache(target, packages):
                 stored[package_name] = reused
             else:
                 matching[package_name] = candidate
-        if index % 25 == 0 or index == len(candidates):
-            print(
-                f"[{target['name']}] checking container cache "
-                f"{index}/{len(candidates)} candidates",
-                flush=True,
-            )
+    if candidates:
+        print(
+            f"[{target['name']}] inspected {len(candidates)} container cache candidates",
+            file=sys.stderr,
+            flush=True,
+        )
 
     with tempfile.TemporaryDirectory(prefix="pacmonster-package-") as temporary:
         for index, (package_name, remote_path) in enumerate(matching.items(), start=1):
@@ -512,14 +547,48 @@ def _snapshot_id(target):
     return f"{target['kind']}-{target_id}-{timestamp}-{uuid4().hex[:8]}"
 
 
-def _sha256(path):
+def _sha256(path, show_progress=False):
     """Return a streaming SHA-256 digest for a potentially large cache archive."""
 
     digest = hashlib.sha256()
     with path.open("rb") as archive:
+        total_bytes = path.stat().st_size
+        processed_bytes = 0
+        next_report = 256 * 1024**2
+        if show_progress and total_bytes >= next_report:
+            print(
+                f"Checking archive content {path.name} "
+                f"({total_bytes / 1024**3:.1f} GiB); press Ctrl+C to cancel",
+                file=sys.stderr,
+                flush=True,
+            )
         for block in iter(lambda: archive.read(1024 * 1024), b""):
             digest.update(block)
+            processed_bytes += len(block)
+            if show_progress and processed_bytes >= next_report and processed_bytes < total_bytes:
+                print(
+                    f"Checking {path.name}: "
+                    f"{processed_bytes / 1024**3:.1f}/"
+                    f"{total_bytes / 1024**3:.1f} GiB",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                next_report += 256 * 1024**2
     return digest.hexdigest()
+
+
+def _cleanup_failed_snapshot(snapshot_directory):
+    """Remove partial snapshot data and any newly orphaned package blobs."""
+
+    shutil.rmtree(snapshot_directory, ignore_errors=True)
+    try:
+        prune_blobs()
+    except (OSError, SnapshotError) as error:
+        print(
+            f"Warning: could not clean unreferenced package blobs: {error}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def create_snapshot(target):
@@ -528,9 +597,9 @@ def create_snapshot(target):
     _require_snapshot_root()
     snapshot_id = _snapshot_id(target)
     snapshot_directory = SNAPSHOT_ROOT / snapshot_id
-    snapshot_directory.mkdir()
 
     try:
+        snapshot_directory.mkdir()
         packages = package_manifest(target)
         archives = _archive_cache(target, packages)
         metadata = {
@@ -557,8 +626,16 @@ def create_snapshot(target):
         temporary_path = snapshot_directory / "snapshot.json.tmp"
         temporary_path.write_text(json.dumps(metadata, indent=2) + "\n")
         temporary_path.replace(metadata_path)
+    except KeyboardInterrupt:
+        _cleanup_failed_snapshot(snapshot_directory)
+        print(
+            f"[{target['name']}] snapshot cancelled; temporary snapshot data cleaned",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise
     except Exception as error:
-        shutil.rmtree(snapshot_directory, ignore_errors=True)
+        _cleanup_failed_snapshot(snapshot_directory)
         if isinstance(error, SnapshotError):
             raise
         raise SnapshotError(f"Could not save snapshot for {target['name']}: {error}") from error
