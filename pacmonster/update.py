@@ -15,6 +15,7 @@ from .lock import release_lock
 from .events import emit_ghost_event
 from .events import emit_pool_event
 from .ghost_pool import GhostPool
+from .librarian import SnapshotError, create_snapshot
 GHOSTS = 4
 
 
@@ -194,6 +195,28 @@ def perform_update(assume_yes=False):
         if not confirm_critical_updates(actions, assume_yes):
             return "ABORTED"
 
+        try:
+            for action in actions:
+                print(
+                    f"[{action['name']}] saving package snapshot before update...",
+                    flush=True,
+                )
+                snapshot = create_snapshot(action)
+                action["snapshot_id"] = snapshot["id"]
+                print(
+                    f"[{action['name']}] package snapshot "
+                    f"{snapshot['id']} saved "
+                    f"({snapshot['package_count']} packages)"
+                )
+                if not snapshot["restorable"]:
+                    print(
+                        f"[{action['name']}] warning: no cached package "
+                        "archives; recovery may require repository access"
+                    )
+        except SnapshotError as error:
+            print(f"Update cancelled: could not create package snapshot: {error}")
+            return "SNAPSHOT_FAILED"
+
         pool = GhostPool(max_ghosts=GHOSTS)
         results = []
         failed = 0
@@ -276,6 +299,7 @@ def perform_update(assume_yes=False):
                         results.append({
                             "id": action["id"],
                             "name": action["name"],
+                            "snapshot_id": action["snapshot_id"],
                             "success": result["success"],
                             "returncode": result["returncode"],
                             "duration": result["duration"]

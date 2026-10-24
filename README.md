@@ -52,7 +52,7 @@ Pacmonster provides a consistent operational interface for maintaining heterogen
 
 # Current Status
 
-Current release: **0.9.11**.
+Current release: **0.9.2**.
 
 Implemented:
 
@@ -68,6 +68,7 @@ Implemented:
 - Update history
 - Status caching
 - Doctor diagnostics
+- Package-state snapshots and cached-archive recovery
 - Proxmox-aware discovery
 
 ---
@@ -218,6 +219,36 @@ sudo pacmonster doctor
 
 `dry-run` prints the planned update commands without executing them.
 
+## Package snapshots and recovery
+
+Before starting updates, Pacmonster's Librarian saves each target's installed
+package/version manifest and only the matching package archives needed for
+recovery. Archives are content-addressed and shared between snapshots: unchanged
+package files are stored once, while newly changed package files add only their
+own size. The three newest manifests per target are kept under
+`/var/lib/pacmonster/snapshots/`; blobs no longer referenced by a retained
+snapshot are removed.
+The doctor also runs the host package manager's native consistency check.
+Snapshots require enough free disk space; check `sudo pacmonster doctor` for
+storage and archive availability.
+
+```bash
+sudo pacmonster librarian list
+sudo pacmonster librarian snapshot [TARGET_ID]
+sudo pacmonster librarian show SNAPSHOT_ID
+sudo pacmonster restaurator list
+sudo pacmonster restaurator restore SNAPSHOT_ID
+```
+
+Restoration compares installed versions with the selected snapshot and uses
+matching package archives from that snapshot. It previews the changes and
+prompts before changing packages; `--yes` skips that confirmation. If an
+exact-version archive is missing, restoration stops without installing a
+partial set. A manifest-only snapshot can help diagnose versions but cannot
+restore packages without cached archives or repository access. This restores
+package versions only; packages added after the snapshot are left installed.
+This is not a filesystem, configuration, or data backup.
+
 ---
 
 # GhostPool Scheduler
@@ -262,6 +293,8 @@ Runtime information is exported under:
 ```
 
 Event and state files include the effective user ID in their names so root and regular-user runs do not conflict over file ownership.
+
+Package snapshots are stored separately under `/var/lib/pacmonster/snapshots/`.
 
 ## Event stream
 

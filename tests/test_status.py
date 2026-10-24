@@ -1,4 +1,5 @@
 import os
+import json
 import tempfile
 from contextlib import redirect_stdout
 from concurrent.futures import ThreadPoolExecutor
@@ -10,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from pacmonster import update
+from pacmonster import doctor, librarian, restaurator, update
 from pacmonster.events import EVENT_LOG, STATE_FILE, write_event
 from pacmonster.inventory import build_inventory
 from pacmonster.models import SystemTarget
@@ -18,6 +19,317 @@ from pacmonster.status import build_status, package_updates
 
 
 class PackageUpdatesTests(unittest.TestCase):
+    def test_librarian_reports_corrupt_snapshot_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            snapshot_directory = Path(directory) / "damaged"
+            snapshot_directory.mkdir()
+            (snapshot_directory / "snapshot.json").write_text("{")
+
+            with patch.object(librarian, "SNAPSHOT_ROOT", Path(directory)):
+                with self.assertRaises(librarian.SnapshotError):
+                    librarian.list_snapshots()
+
+    def test_librarian_deduplicates_identical_package_archives(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package_archive = root / "demo-1.0-1-x86_64.pkg.tar.zst"
+            package_archive.write_bytes(b"native compressed package")
+            with patch.object(librarian, "SNAPSHOT_ROOT", root / "snapshots"):
+                first = librarian._store_archive_blob(package_archive)
+                second = librarian._store_archive_blob(package_archive)
+
+            self.assertEqual(
+                {key: value for key, value in first.items() if key != "new"},
+                {key: value for key, value in second.items() if key != "new"},
+            )
+            self.assertTrue(first["new"])
+            self.assertFalse(second["new"])
+            self.assertEqual(
+                len(list((root / "snapshots" / "blobs").iterdir())),
+                1,
+            )
+            self.assertEqual(first["bytes"], package_archive.stat().st_size)
+
+    def test_librarian_stores_only_new_package_versions_across_snapshots(self):
+        target = {
+            "id": "host",
+            "name": "host",
+            "kind": "host",
+            "distro": "arch",
+            "package_manager": "pacman",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "cache"
+            cache.mkdir()
+            (cache / "demo-1.0-1-x86_64.pkg.tar.zst").write_bytes(b"demo-v1")
+            (cache / "libdemo-1.0-1-x86_64.pkg.tar.zst").write_bytes(b"lib-v1")
+
+            def package_query(command, **_kwargs):
+                identities = []
+                for value in command[2:]:
+                    name = Path(value).name
+                    if name.startswith("demo-1.0"):
+                        identities.append("demo 1.0-1")
+                    elif name.startswith("demo-2.0"):
+                        identities.append("demo 2.0-1")
+                    elif name.startswith("demo-3.0"):
+                        identities.append("demo 3.0-1")
+                    elif name.startswith("libdemo-"):
+                        identities.append("libdemo 1.0-1")
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout="\n".join(identities),
+                    stderr="",
+                )
+
+            with (
+                patch.object(librarian, "SNAPSHOT_ROOT", root / "snapshots"),
+                patch.dict(librarian.CACHE_DIRECTORIES, {"pacman": str(cache)}),
+                patch.object(
+                    librarian,
+                    "package_manifest",
+                    side_effect=[
+                        {"demo": "1.0-1", "libdemo": "1.0-1"},
+                        {"demo": "2.0-1", "libdemo": "1.0-1"},
+                        {"demo": "2.0-1", "libdemo": "1.0-1"},
+                        {"demo": "3.0-1", "libdemo": "1.0-1"},
+                    ],
+                ),
+                patch.object(
+                    librarian.subprocess,
+                    "run",
+                    side_effect=package_query,
+                ) as package_query_run,
+                redirect_stdout(StringIO()),
+            ):
+                first = librarian.create_snapshot(target)
+                (cache / "demo-2.0-1-x86_64.pkg.tar.zst").write_bytes(b"demo-v2")
+                second = librarian.create_snapshot(target)
+                third = librarian.create_snapshot(target)
+                (cache / "demo-3.0-1-x86_64.pkg.tar.zst").write_bytes(b"demo-v3")
+                fourth = librarian.create_snapshot(target)
+                blob_directory = root / "snapshots" / "blobs"
+
+            self.assertEqual(first["new_archive_bytes"], first["archive_bytes"])
+            self.assertEqual(
+                second["new_archive_bytes"],
+                second["archives"]["demo"]["bytes"],
+            )
+            self.assertEqual(third["new_archive_bytes"], 0)
+            self.assertEqual(fourth["new_archive_bytes"], fourth["archives"]["demo"]["bytes"])
+            self.assertEqual(len(list(blob_directory.iterdir())), 3)
+            self.assertFalse((root / "snapshots" / first["id"]).exists())
+            self.assertEqual(package_query_run.call_count, 3)
+
+    def test_librarian_keeps_only_three_snapshots_per_target(self):
+        target = {
+            "id": "host",
+            "name": "host",
+            "kind": "host",
+            "distro": "arch",
+            "package_manager": "pacman",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.object(librarian, "SNAPSHOT_ROOT", Path(directory)),
+                patch.object(librarian, "package_manifest", return_value={"demo": "1.0"}),
+                patch.object(librarian, "_archive_cache") as archive_cache,
+            ):
+                archive_cache.return_value = {
+                    "demo": {
+                        "blob": "a" * 64 + ".pkg.tar.zst",
+                        "sha256": "a" * 64,
+                        "bytes": 123,
+                        "new": True,
+                    }
+                }
+                snapshots = [librarian.create_snapshot(target) for _ in range(4)]
+
+                self.assertEqual(len(librarian.list_snapshots("host")), 3)
+                self.assertEqual(snapshots[-1]["archive_bytes"], 123)
+                self.assertFalse(
+                    (Path(directory) / snapshots[0]["id"]).exists()
+                )
+                archive_cache.assert_called_with(target, {"demo": "1.0"})
+
+    def test_librarian_keeps_only_cache_archives_matching_installed_versions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archives = [
+                Path(directory) / "demo-1.0-1-x86_64.pkg.tar.zst",
+                Path(directory) / "demo-2.0-1-x86_64.pkg.tar.zst",
+            ]
+            with patch.object(
+                librarian.subprocess,
+                "run",
+                return_value=SimpleNamespace(
+                    returncode=0,
+                    stdout="demo 1.0-1\ndemo 2.0-1\n",
+                    stderr="",
+                ),
+            ) as query:
+                matching = librarian._matching_cache_archives(
+                    "pacman",
+                    archives,
+                    {"demo": "1.0-1"},
+                )
+
+        self.assertEqual(matching, [archives[0]])
+        self.assertEqual(len(query.call_args.args[0]), 4)
+
+    def test_librarian_reads_deb_package_identity_and_architecture(self):
+        with patch.object(
+            librarian.subprocess,
+            "run",
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout="libdemo\n1.0\namd64\n",
+                stderr="",
+            ),
+        ):
+            identity = librarian._archive_identity("apt", Path("libdemo_1.0_amd64.deb"))
+
+        self.assertEqual(identity, ("libdemo", "1.0", "amd64"))
+
+    def test_doctor_reports_structured_prerequisite_and_snapshot_checks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with (
+                patch.object(doctor.os, "geteuid", return_value=0),
+                patch.object(doctor, "SNAPSHOT_ROOT", Path(directory)),
+                patch.object(doctor, "get_host_distro", return_value="arch"),
+                patch.object(doctor, "get_package_manager", return_value="pacman"),
+                patch.object(doctor, "command_exists", side_effect=lambda name: name == "pacman"),
+                patch.object(doctor, "load_inventory_cache", return_value=None),
+                patch.object(doctor, "load_status_cache", return_value=None),
+                patch.object(doctor, "list_snapshots", return_value=[]),
+                patch.object(
+                    doctor.subprocess,
+                    "run",
+                    return_value=SimpleNamespace(returncode=0, stdout="", stderr=""),
+                ) as health_check,
+                patch.object(doctor.shutil, "disk_usage", return_value=SimpleNamespace(free=3 * 1024**3)),
+            ):
+                checks = doctor.run_doctor()
+
+        checks_by_name = {check["name"]: check for check in checks}
+        self.assertEqual(checks_by_name["host package manager"]["status"], "ok")
+        self.assertEqual(checks_by_name["package database health"]["status"], "ok")
+        self.assertEqual(checks_by_name["pct command"]["status"], "skip")
+        self.assertEqual(checks_by_name["latest package snapshot"]["status"], "warning")
+        self.assertIn("detail", checks_by_name["snapshot disk space"])
+        health_check.assert_any_call(
+            ["pacman", "-Dk"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=60,
+        )
+
+    def test_restaurator_installs_only_archives_matching_snapshot_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot_id = "host-host-test"
+            snapshot_directory = root / snapshot_id
+            cache_directory = root / "blobs"
+            cache_directory.mkdir(parents=True)
+            source_archive = root / "demo-1.0-1-x86_64.pkg.tar.zst"
+            source_archive.write_text("test package archive")
+            digest = librarian._sha256(source_archive)
+            package_archive = cache_directory / (digest + ".pkg.tar.zst")
+            package_archive.write_bytes(source_archive.read_bytes())
+            (snapshot_directory).mkdir()
+
+            metadata = {
+                "id": snapshot_id,
+                "target": {
+                    "id": "host",
+                    "name": "test-host",
+                    "kind": "host",
+                    "package_manager": "pacman",
+                },
+                "packages": {"demo": "1.0"},
+                "archives": {
+                    "demo": {
+                        "blob": package_archive.name,
+                        "sha256": digest,
+                        "bytes": package_archive.stat().st_size,
+                    }
+                },
+            }
+            (snapshot_directory / "snapshot.json").write_text(json.dumps(metadata))
+            process_result = SimpleNamespace(
+                returncode=0,
+                stdout="restored",
+                stderr="",
+            )
+            with (
+                patch.object(librarian, "SNAPSHOT_ROOT", root),
+                patch.object(
+                    librarian,
+                    "package_manifest",
+                    return_value={"demo": "2.0"},
+                ),
+                patch.object(
+                    restaurator,
+                    "_archive_package",
+                    return_value=("demo", "1.0"),
+                ),
+                patch.object(
+                    restaurator.subprocess,
+                    "run",
+                    return_value=process_result,
+                ) as run_command,
+                patch.object(restaurator, "acquire_lock", return_value=True),
+                patch.object(restaurator, "release_lock"),
+                redirect_stdout(StringIO()),
+            ):
+                result = restaurator.restore_snapshot(snapshot_id, assume_yes=True)
+
+        self.assertEqual(result["status"], "success")
+        self.assertIn(package_archive.name, result["restored"])
+        self.assertEqual(run_command.call_args.args[0][:3], ["pacman", "-U", "--noconfirm"])
+
+    def test_restaurator_will_not_compete_with_an_existing_update(self):
+        with (
+            patch.object(restaurator, "acquire_lock", return_value=False),
+            patch.object(librarian, "load_snapshot") as load_snapshot,
+        ):
+            result = restaurator.restore_snapshot("snapshot-id")
+
+        self.assertEqual(result["status"], "locked")
+        load_snapshot.assert_not_called()
+
+    def test_restaurator_matches_multiarch_deb_and_uses_local_dnf_archives(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_directory = Path(directory) / "package-cache"
+            cache_directory.mkdir()
+            package_archive = cache_directory / "libdemo_1.0_amd64.deb"
+            package_archive.touch()
+            snapshot = {
+                "target": {"package_manager": "apt"},
+                "packages": {"libdemo:amd64": "1.0"},
+            }
+            with patch.object(
+                restaurator,
+                "_archive_package",
+                return_value=("libdemo:amd64", "1.0"),
+            ):
+                archives, missing = restaurator._find_restore_packages(
+                    snapshot,
+                    Path(directory),
+                    {"libdemo:amd64": "2.0"},
+                )
+
+        self.assertEqual(archives, [package_archive])
+        self.assertEqual(missing, [])
+        self.assertEqual(
+            restaurator._restore_command(
+                {"target": {"package_manager": "dnf"}},
+                [Path("/tmp/demo-1.0.rpm")],
+            ),
+            ["dnf", "install", "-y", "/tmp/demo-1.0.rpm"],
+        )
+
     def test_package_command_output_is_not_captured(self):
         process = Mock()
         process.wait.return_value = 0
@@ -94,6 +406,15 @@ class PackageUpdatesTests(unittest.TestCase):
             patch.object(update, "acquire_lock", return_value=True),
             patch.object(update, "release_lock"),
             patch.object(update, "build_dry_run", return_value=actions),
+            patch.object(
+                update,
+                "create_snapshot",
+                side_effect=lambda action: {
+                    "id": f"snapshot-{action['id']}",
+                    "package_count": 1,
+                    "restorable": True,
+                },
+            ),
             patch.object(update, "execute_action", side_effect=run_action),
             patch.object(update, "emit_ghost_event"),
             patch.object(update, "emit_pool_event"),
@@ -116,6 +437,15 @@ class PackageUpdatesTests(unittest.TestCase):
                 "build_dry_run",
                 return_value=[{"id": "1", "name": "container-1"}],
             ),
+            patch.object(
+                update,
+                "create_snapshot",
+                return_value={
+                    "id": "snapshot-1",
+                    "package_count": 1,
+                    "restorable": True,
+                },
+            ),
             patch.object(update, "ActionRunner", return_value=runner),
             patch.object(update, "wait", side_effect=KeyboardInterrupt),
             patch.object(update, "execute_action"),
@@ -127,6 +457,29 @@ class PackageUpdatesTests(unittest.TestCase):
 
         self.assertEqual(result, "INTERRUPTED")
         runner.stop.assert_called_once_with()
+        release_lock.assert_called_once_with()
+
+    def test_update_does_not_start_if_snapshot_creation_fails(self):
+        with (
+            patch.object(update, "acquire_lock", return_value=True),
+            patch.object(update, "release_lock") as release_lock,
+            patch.object(
+                update,
+                "build_dry_run",
+                return_value=[{"id": "1", "name": "host"}],
+            ),
+            patch.object(
+                update,
+                "create_snapshot",
+                side_effect=librarian.SnapshotError("disk unavailable"),
+            ),
+            patch.object(update, "execute_action") as execute_action,
+            redirect_stdout(StringIO()),
+        ):
+            result = update.perform_update(assume_yes=True)
+
+        self.assertEqual(result, "SNAPSHOT_FAILED")
+        execute_action.assert_not_called()
         release_lock.assert_called_once_with()
 
     @patch("pacmonster.inventory.save_inventory_cache")

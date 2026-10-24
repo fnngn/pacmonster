@@ -11,10 +11,12 @@ pacmonster/exceptions.py
 pacmonster/ghost_pool.py
 pacmonster/history.py
 pacmonster/inventory.py
+pacmonster/librarian.py
 pacmonster/lock.py
 pacmonster/main.py
 pacmonster/models.py
 pacmonster/reboot.py
+pacmonster/restaurator.py
 pacmonster/status.py
 pacmonster/update.py
 pacmonster.egg-info/PKG-INFO

@@ -10,6 +10,8 @@ from .update import build_dry_run
 from .update import perform_update
 from .history import add_history
 from .history import load_history
+from .librarian import SnapshotError, create_snapshot, list_snapshots, load_snapshot
+from .restaurator import RestoreError, render_result, restore_snapshot
 
 
 def render_inventory(data):
@@ -184,21 +186,144 @@ def doctor_command(json_output=False):
     results = run_doctor()
 
     if json_output:
-        print(json.dumps([
-            {
-                "name": name,
-                "result": result
-            }
-            for name, result in results
-        ], indent=2))
+        print(json.dumps(results, indent=2))
+    else:
+        print()
+        print("PACMONSTER DOCTOR")
+        print()
+
+        for check in results:
+            print(
+                f"[{check['status'].upper()}] {check['name']}: "
+                f"{check['detail']}"
+            )
+
+    if any(check["status"] == "fail" for check in results):
+        sys.exit(1)
+
+
+def librarian_command(command, target_id=None, json_output=False):
+    """List, inspect, or create package snapshots."""
+
+    if command == "list":
+        try:
+            snapshots = list_snapshots(target_id)
+        except SnapshotError as error:
+            print(f"Cannot list snapshots: {error}")
+            sys.exit(1)
+        if json_output:
+            print(json.dumps(snapshots, indent=2))
+            return
+        if not snapshots:
+            print("No package snapshots found.")
+            return
+        for snapshot in snapshots:
+            archive_state = "archives saved" if snapshot["restorable"] else "manifest only"
+            print(
+                snapshot["id"],
+                snapshot["target"]["name"],
+                snapshot["created"],
+                f"{snapshot['package_count']} packages",
+                archive_state,
+            )
         return
 
-    print()
-    print("PACMONSTER DOCTOR")
-    print()
+    if command == "show" and target_id:
+        try:
+            snapshot = load_snapshot(target_id)
+        except SnapshotError as error:
+            print(f"Snapshot unavailable: {error}")
+            sys.exit(1)
+        if json_output:
+            print(json.dumps(snapshot, indent=2))
+            return
+        print(f"Snapshot: {snapshot['id']}")
+        print(f"Target: {snapshot['target']['name']}")
+        print(f"Created: {snapshot['created']}")
+        print(f"Packages: {snapshot['package_count']}")
+        print(
+            f"Package archives: {snapshot['archive_bytes']} bytes referenced, "
+            f"{snapshot.get('new_archive_bytes', snapshot['archive_bytes'])} bytes newly stored"
+        )
+        return
 
-    for name, result in results:
-        print(f"[OK] {name}" if result else f"[FAIL] {name}")
+    if command != "snapshot":
+        print("Usage: pacmonster librarian {list|snapshot [TARGET_ID]|show SNAPSHOT_ID}")
+        sys.exit(2)
+
+    inventory = build_inventory()
+    targets = [
+        item for item in inventory
+        if item.kind in ("host", "lxc")
+        and item.status == "running"
+        and item.package_manager != "unknown"
+        and (target_id is None or str(item.id) == str(target_id))
+    ]
+    if target_id is not None and not targets:
+        print(f"No supported running host or container found: {target_id}")
+        sys.exit(2)
+
+    snapshots = []
+    try:
+        for target in targets:
+            snapshot = create_snapshot(target.__dict__)
+            snapshots.append(snapshot)
+            if not json_output:
+                print(
+                    f"Saved {snapshot['id']}: {snapshot['package_count']} packages, "
+                    f"{snapshot.get('new_archive_bytes', snapshot['archive_bytes'])} new archive bytes "
+                    f"({snapshot['archive_bytes']} bytes referenced)"
+                )
+    except SnapshotError as error:
+        print(f"Snapshot failed: {error}")
+        sys.exit(1)
+
+    if json_output:
+        print(json.dumps(snapshots, indent=2))
+    elif not targets:
+        print("No supported running hosts or containers found.")
+
+
+def restaurator_command(command, snapshot_id=None, assume_yes=False, json_output=False):
+    """List snapshots or restore a selected package snapshot."""
+
+    if command == "list":
+        try:
+            snapshots = list_snapshots()
+        except SnapshotError as error:
+            print(f"Cannot list snapshots: {error}")
+            sys.exit(1)
+        if json_output:
+            print(json.dumps(snapshots, indent=2))
+        else:
+            librarian_command("list")
+        return
+    if command != "restore" or not snapshot_id:
+        print("Usage: pacmonster restaurator {list|restore SNAPSHOT_ID [--yes]}")
+        sys.exit(2)
+
+    try:
+        result = restore_snapshot(
+            snapshot_id,
+            assume_yes=assume_yes,
+            json_output=json_output,
+        )
+    except (RestoreError, SnapshotError) as error:
+        print(f"Restore failed: {error}")
+        sys.exit(1)
+
+    if json_output:
+        print(json.dumps(result, indent=2))
+    else:
+        render_result(result)
+    if result["status"] == "failed":
+        sys.exit(1)
+    if result["status"] == "missing":
+        sys.exit(1)
+    if result["status"] == "aborted":
+        sys.exit(2)
+    if result["status"] == "locked":
+        sys.exit(3)
 
 
 def dry_run_command(json_output=False):
@@ -239,6 +364,9 @@ def update_command(assume_yes=False):
         print("Update interrupted.")
         sys.exit(130)
 
+    if result == "SNAPSHOT_FAILED":
+        sys.exit(4)
+
     if result is None:
         print("No status cache found.")
         sys.exit(4)
@@ -254,7 +382,11 @@ def update_command(assume_yes=False):
         {
             "updated": updated,
             "failed": failed,
-            "duration": duration
+            "duration": duration,
+            "snapshots": {
+                item["id"]: item["snapshot_id"]
+                for item in result
+            }
         }
     )
 
@@ -298,6 +430,11 @@ def help_command():
     print("dry-run")
     print("update")
     print("history")
+    print("librarian list")
+    print("librarian snapshot [TARGET_ID]")
+    print("librarian show SNAPSHOT_ID")
+    print("restaurator list")
+    print("restaurator restore SNAPSHOT_ID [--yes]")
 
 
 def main():
@@ -332,6 +469,23 @@ def main():
     elif cmd == "history":
         json_output = "--json" in sys.argv
         history_command(json_output)
+    elif cmd == "librarian":
+        operation = sys.argv[2] if len(sys.argv) > 2 else "list"
+        argument = sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else None
+        librarian_command(
+            operation,
+            argument,
+            json_output="--json" in sys.argv
+        )
+    elif cmd == "restaurator":
+        operation = sys.argv[2] if len(sys.argv) > 2 else "list"
+        snapshot_id = sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else None
+        restaurator_command(
+            operation,
+            snapshot_id,
+            assume_yes="--yes" in sys.argv,
+            json_output="--json" in sys.argv
+        )
     else:
         help_command()
 
