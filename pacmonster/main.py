@@ -10,6 +10,8 @@ from .cache import load_inventory_cache
 from .cache import load_status_cache
 from .status import build_status
 from .doctor import run_doctor
+from .doctor import run_installation_checks
+from .archeologist import search_logs
 from .update import build_dry_run
 from .update import perform_update
 from .history import add_history
@@ -184,16 +186,20 @@ def status_command(verbose=False, json_output=False):
         render_status(cache["status"])
 
 
-def doctor_command(json_output=False):
+def doctor_command(json_output=False, installation=False):
     """Run environment checks and display their results."""
 
-    results = run_doctor()
+    results = run_installation_checks() if installation else run_doctor()
 
     if json_output:
         print(json.dumps(results, indent=2))
     else:
         print()
-        print("PACMONSTER DOCTOR")
+        print(
+            "PACMONSTER INSTALLATION CHECK"
+            if installation
+            else "PACMONSTER DOCTOR"
+        )
         print()
 
         for check in results:
@@ -204,6 +210,33 @@ def doctor_command(json_output=False):
 
     if any(check["status"] == "fail" for check in results):
         sys.exit(1)
+
+
+def archeologist_command(command="all", query=None, json_output=False):
+    """Search available application and package-manager logs."""
+
+    if command not in {"all", "issues", "search"}:
+        print("Usage: pacmonster archeologist [all|issues|search QUERY] [--json]")
+        sys.exit(2)
+    if command == "search" and not query:
+        print("Usage: pacmonster archeologist search QUERY [--json]")
+        sys.exit(2)
+
+    records = search_logs(
+        query=query if command == "search" else None,
+        issues_only=command == "issues",
+    )
+    if json_output:
+        print(json.dumps(records, indent=2))
+        return
+    if not records:
+        print("No matching log entries found.")
+        return
+    for record in records:
+        print(
+            f"[{record['level'].upper()}] {record['timestamp']} "
+            f"{record['source']}: {record['message']}"
+        )
 
 
 def librarian_command(command, target_id=None, json_output=False):
@@ -390,7 +423,16 @@ def update_command(assume_yes=False):
             "snapshots": {
                 item["id"]: item["snapshot_id"]
                 for item in result
-            }
+            },
+            "targets": [
+                {
+                    "id": item["id"],
+                    "name": item["name"],
+                    "duration": item["duration"],
+                    "success": item["success"],
+                }
+                for item in result
+            ],
         }
     )
 
@@ -471,6 +513,12 @@ def witchdoctor_command():
     _run_tui("doctor")
 
 
+def start_command():
+    """Launch the Pacmonster main menu."""
+
+    _run_tui("start")
+
+
 
 def history_command(json_output=False):
     """Display saved update and maintenance history."""
@@ -493,25 +541,40 @@ def history_command(json_output=False):
 
         print()
         print()
-def help_command():
+def help_command(json_output=False):
     """Print the supported CLI command names."""
 
-    print("refresh")
-    print("refresh-status")
-    print("inventory")
-    print("status")
-    print("status --verbose")
-    print("doctor")
-    print("dry-run")
-    print("update")
-    print("ghosthunter")
-    print("witchdoctor")
-    print("history")
-    print("librarian list")
-    print("librarian snapshot [TARGET_ID]")
-    print("librarian show SNAPSHOT_ID")
-    print("restaurator list")
-    print("restaurator restore SNAPSHOT_ID [--yes]")
+    commands = [
+        "refresh",
+        "refresh-status",
+        "inventory",
+        "status",
+        "status --verbose",
+        "doctor",
+        "doctor --installation",
+        "dry-run",
+        "update",
+        "start",
+        "ghosthunter",
+        "witchdoctor",
+        "librarian",
+        "archeologist",
+        "advisor",
+        "history",
+        "librarian list",
+        "librarian snapshot [TARGET_ID]",
+        "librarian show SNAPSHOT_ID",
+        "archeologist all",
+        "archeologist issues",
+        "archeologist search QUERY",
+        "restaurator list",
+        "restaurator restore SNAPSHOT_ID [--yes]",
+    ]
+    if json_output:
+        print(json.dumps(commands, indent=2))
+    else:
+        for command in commands:
+            print(command)
 
 
 def _dispatch():
@@ -536,28 +599,51 @@ def _dispatch():
         status_command(verbose, json_output)
     elif cmd == "doctor":
         json_output = "--json" in sys.argv
-        doctor_command(json_output)
+        if "--installation" in sys.argv:
+            doctor_command(json_output, installation=True)
+        else:
+            doctor_command(json_output)
+    elif cmd == "help":
+        help_command(json_output="--json" in sys.argv)
     elif cmd == "dry-run":
         json_output = "--json" in sys.argv
         dry_run_command(json_output)
     elif cmd == "update":
         assume_yes = "--yes" in sys.argv
         update_command(assume_yes)
+    elif cmd == "start":
+        start_command()
     elif cmd == "ghosthunter":
         ghosthunter_command()
     elif cmd == "witchdoctor":
         witchdoctor_command()
+    elif cmd == "advisor":
+        _run_tui("advisor")
+    elif cmd == "archeologist":
+        operation = sys.argv[2] if len(sys.argv) > 2 else None
+        if operation is None or operation == "tui":
+            _run_tui("archeologist")
+        else:
+            query = sys.argv[3] if operation == "search" and len(sys.argv) > 3 else None
+            archeologist_command(
+                operation,
+                query,
+                json_output="--json" in sys.argv,
+            )
     elif cmd == "history":
         json_output = "--json" in sys.argv
         history_command(json_output)
     elif cmd == "librarian":
-        operation = sys.argv[2] if len(sys.argv) > 2 else "list"
-        argument = sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else None
-        librarian_command(
-            operation,
-            argument,
-            json_output="--json" in sys.argv
-        )
+        operation = sys.argv[2] if len(sys.argv) > 2 else None
+        if operation is None or operation == "tui":
+            _run_tui("librarian")
+        else:
+            argument = sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else None
+            librarian_command(
+                operation,
+                argument,
+                json_output="--json" in sys.argv
+            )
     elif cmd == "restaurator":
         operation = sys.argv[2] if len(sys.argv) > 2 else "list"
         snapshot_id = sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else None

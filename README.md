@@ -29,6 +29,7 @@ sudo pacmonster
 - [Supported Platforms](#supported-platforms)
 - [Installation](#installation)
 - [Commands](#commands)
+- [Terminal Interfaces](#terminal-interfaces)
 - [GhostPool Scheduler](#ghostpool-scheduler)
 - [Runtime State](#runtime-state)
 - [Dashboard](#dashboard)
@@ -52,7 +53,7 @@ Pacmonster provides a consistent operational interface for maintaining heterogen
 
 # Current Status
 
-Current release: **0.9.4** (CLI and TUI).
+Current release: **0.9.5** (CLI and TUI).
 
 Implemented:
 
@@ -114,6 +115,9 @@ GhostPool Scheduler
 - Unattended updates
 - Doctor diagnostics
 - Interactive Doctor diagnostics (`witchdoctor`)
+- Pacmonster installation checks
+- Archeologist log search and warning/error filtering
+- Start menu and Advisor help/handbook interface
 - Proxmox-aware discovery
 - Cron-friendly exit codes
 
@@ -219,14 +223,57 @@ sudo pacmonster status --verbose
 ## Other commands
 
 ```bash
+sudo pacmonster start
+sudo pacmonster ghosthunter
+sudo pacmonster witchdoctor
+pacmonster librarian
+pacmonster archeologist
+pacmonster advisor
+pacmonster help
 sudo pacmonster dry-run
 sudo pacmonster history
 sudo pacmonster doctor
 sudo pacmonster witchdoctor
+sudo pacmonster doctor --installation
+sudo pacmonster archeologist
+sudo pacmonster archeologist issues
+sudo pacmonster archeologist search "disk space"
 ```
 
+`pacmonster start` opens the main menu for Ghosthunter, Witchdoctor,
+Librarian, Archeologist, Advisor, and Restaurator. Restaurator currently opens
+its snapshot list; use `sudo pacmonster restaurator restore SNAPSHOT_ID` to
+restore a selected snapshot.
 `dry-run` prints the planned update commands without executing them.
-`witchdoctor` opens Doctor diagnostics in the interactive TUI.
+`witchdoctor` opens an old-library-themed diagnostic menu with system and
+Pacmonster installation checks. `doctor --installation` runs the installation
+checks directly. `archeologist` opens a log browser; its `issues` view reduces
+records to likely warnings and errors, while `search QUERY` finds matching
+text. The CLI also accepts `archeologist all|issues|search QUERY --json`.
+`pacmonster advisor` opens the reference-room interface. The plain
+`pacmonster help` command displays available commands; `pacmonster help --json`
+returns them as JSON for integrations.
+
+## Terminal Interfaces
+
+Pacmonster's terminal interfaces are task-oriented front ends for the CLI:
+
+| Interface | Command | Purpose |
+|-----------|---------|---------|
+| Start | `pacmonster start` | Main menu for all interfaces |
+| Ghosthunter | `sudo pacmonster ghosthunter` | Run planned updates and monitor workers |
+| Witchdoctor | `sudo pacmonster witchdoctor` | Diagnose the host and check the installation |
+| Librarian | `pacmonster librarian` | Browse and create package recovery snapshots |
+| Archeologist | `pacmonster archeologist` | Search logs and filter likely warnings/errors |
+| Advisor | `pacmonster advisor` | Browse CLI help, README, license, and developer information |
+
+The interfaces share a parchment, petrol, and gold palette. In scrollable
+views, use the arrow keys or `PgUp`/`PgDn`; `Home` and `End` jump to the
+beginning and end, while `Esc` returns to the previous menu. The Advisor loads
+its handbook from `README.md` and its license text from `LICENSE` (both
+embedded during compilation, with runtime file overrides for checkout or
+packaged copies). Command help comes from the CLI's JSON output. Thus the
+in-app handbook follows the README instead of maintaining a separate copy.
 
 ## Package snapshots and recovery
 
@@ -257,6 +304,11 @@ sudo pacmonster restaurator list
 sudo pacmonster restaurator restore SNAPSHOT_ID
 ```
 
+Run `sudo pacmonster librarian` to enter the Librarian's old-library-inspired
+interface. Browse the catalogue, create new volumes of package snapshots, and
+inspect their records. The explicit `librarian list|snapshot|show` commands
+remain available for scripts and direct CLI use.
+
 Restoration compares installed versions with the selected snapshot and uses
 matching package archives from that snapshot. It previews the changes and
 prompts before changing packages; `--yes` skips that confirmation. If an
@@ -270,9 +322,20 @@ This is not a filesystem, configuration, or data backup.
 
 # GhostPool Scheduler
 
-Pacmonster executes updates through GhostPool, a worker pool with a maximum of four concurrent targets. Each Ghost is one execution slot. Targets are dispatched in FIFO order, and completed slots are reused until the queue is empty.
+Pacmonster executes updates through GhostPool. Each Ghost is one execution
+slot; targets are dispatched in FIFO order, and completed slots are reused
+until the queue is empty. Worker count is based on the CPUs available to the
+process (including CPU affinity and detected cgroup quotas), with at most half
+of those cores used (with a minimum of one worker when work exists) and an
+overall cap of eight workers. The limit is
+re-evaluated while scheduling: available memory and current system load can
+reduce how many new targets start without interrupting work already underway.
+At least one worker is kept when there is work to do.
 
-Package-manager output is shown live. For quiet operations, Pacmonster prints a running-time heartbeat every 10 seconds.
+When available, memory is measured against a 1 GiB reserve and a 1 GiB
+allowance per worker. The update TUI displays progress estimates based on
+recent successful runs for the same target. Until a target has history, its
+progress bar is indeterminate rather than presenting a fabricated percentage.
 
 Lifecycle:
 
@@ -298,6 +361,7 @@ The scheduler continuously tracks:
 - Idle workers
 - Pool capacity
 - Current worker assignments
+- Per-target elapsed time and estimated progress
 
 ---
 
@@ -344,18 +408,25 @@ Example:
 ```json
 {
   "active": 2,
-  "idle": 2,
-  "capacity": 4,
+  "idle": 0,
+  "capacity": 2,
+  "cpu_cores": 4,
   "ghosts": [
     {
       "id": 1,
       "busy": true,
-      "target": "pihole"
+      "target": "pihole",
+      "progress": 70,
+      "elapsed_seconds": 42.0,
+      "estimated_seconds": 60.0
     },
     {
       "id": 4,
       "busy": true,
-      "target": "arch-template"
+      "target": "arch-template",
+      "progress": null,
+      "elapsed_seconds": 11.0,
+      "estimated_seconds": null
     }
   ]
 }
@@ -365,22 +436,23 @@ Example:
 
 # Dashboard
 
-A lightweight Rust TUI provides live scheduler visibility and interactive
-Doctor diagnostics. Its text panes support `↑`/`↓`, `PgUp`/`PgDn`, and `Home`/
-`End`; the update view follows new output until you scroll away, and `End`
-resumes following.
+A lightweight Rust TUI provides live scheduler visibility, the main menu, and
+the Ghosthunter, Witchdoctor, Librarian, Archeologist, and Advisor
+interfaces. Its text panes support `↑`/`↓`, `PgUp`/`PgDn`, and `Home`/`End`;
+the update view follows new output until you scroll away, and `End` resumes
+following.
 
 Current dashboard:
 
 ```text
-Ghost Pool
+THE GHOST POOL
 
 ᗣ Active      2
-◌ Idle        2
-◌ Available   2
+◌ Idle        0
+◌ Available   0
 
-ᗣ G01 pihole
-ᗣ G04 arch-template
+ᗣ G01 [#######---] [~70%] pihole
+ᗣ G02 [---###----] [estimating] arch-template
 ```
 
 The TUI builds with Rust/Cargo **1.85 or newer**; Proxmox utilities are not
@@ -429,8 +501,13 @@ run, `q` or `Ctrl+C` requests an interrupt and lets Pacmonster stop
 package-manager processes safely. The update workflow itself requires a Linux
 host with a supported package manager; LXC discovery and updates require
 Proxmox's `pct` command.
-Witchdoctor displays Doctor checks with colored PASS, WARN, SKIP, and FAIL
-statuses, then asks whether to exit when the diagnostic run completes.
+Witchdoctor provides a menu for host diagnostics and Pacmonster installation
+checks. The Archeologist can browse available Pacmonster and package-manager
+logs, reduce them to likely warnings/errors, or search for a term. Both
+interfaces use the standard parchment, petrol, and gold palette; result panes
+can be scrolled with the arrow and page keys. The Librarian offers a snapshot
+catalogue and creation flow. The Advisor shows CLI help, a readable version
+of this README, the full license text, and project/build information.
 
 ---
 
@@ -592,6 +669,9 @@ Run the update or Doctor workflow from the source checkout:
 ```bash
 cargo run -- --run-updates
 cargo run -- --run-doctor
+cargo run -- --run-librarian
+cargo run -- --run-archeologist
+cargo run -- --run-advisor
 ```
 
 ---

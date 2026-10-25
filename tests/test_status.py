@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from pacmonster import doctor, librarian, restaurator, update
+from pacmonster import archeologist, doctor, librarian, restaurator, update
 from pacmonster import main as cli_main
 from pacmonster.events import EVENT_LOG, STATE_FILE, write_event
 from pacmonster.inventory import build_inventory
@@ -115,6 +115,112 @@ class PackageUpdatesTests(unittest.TestCase):
             ["/usr/bin/pacmonster-tui", "--run-doctor"],
             check=False,
         )
+
+    def test_start_command_launches_main_menu(self):
+        with (
+            patch.object(cli_main.sys, "argv", ["pacmonster", "start"]),
+            patch.object(cli_main, "_run_tui") as run_tui,
+        ):
+            cli_main._dispatch()
+
+        run_tui.assert_called_once_with("start")
+
+    def test_advisor_command_launches_reference_tui(self):
+        with (
+            patch.object(cli_main.sys, "argv", ["pacmonster", "advisor"]),
+            patch.object(cli_main, "_run_tui") as run_tui,
+        ):
+            cli_main._dispatch()
+
+        run_tui.assert_called_once_with("advisor")
+
+    def test_help_json_includes_advisor_and_start_commands(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            cli_main.help_command(json_output=True)
+
+        commands = json.loads(output.getvalue())
+        self.assertIn("advisor", commands)
+        self.assertIn("start", commands)
+
+    def test_archeologist_command_launches_tui(self):
+        with (
+            patch.object(cli_main.sys, "argv", ["pacmonster", "archeologist"]),
+            patch.object(cli_main, "_run_tui") as run_tui,
+        ):
+            cli_main._dispatch()
+
+        run_tui.assert_called_once_with("archeologist")
+
+    def test_doctor_installation_check_outputs_structured_results(self):
+        output = StringIO()
+        checks = [{"name": "TUI", "status": "ok", "detail": "/usr/bin/pacmonster-tui"}]
+        with (
+            patch.object(cli_main, "run_installation_checks", return_value=checks),
+            redirect_stdout(output),
+        ):
+            cli_main.doctor_command(json_output=True, installation=True)
+        self.assertEqual(json.loads(output.getvalue()), checks)
+
+    def test_archeologist_search_and_issue_filter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            event_log = Path(directory) / "events.jsonl"
+            event_log.write_text(
+                '{"event":"assigned","target":"host"}\n'
+                '{"event":"failed","target":"container"}\n'
+            )
+            warning_log = Path(directory) / "apt.log"
+            warning_log.write_text(
+                "W: repository signature warning\n"
+                "E: dpkg returned an error\n"
+                "installed libgpg-error package\n"
+                "All packages configured\n"
+            )
+            with (
+                patch.object(archeologist, "EVENT_LOG", event_log),
+                patch.object(archeologist, "LOG_PATHS", (warning_log,)),
+            ):
+                issues = archeologist.search_logs(issues_only=True)
+                searched = archeologist.search_logs(query="container")
+
+        self.assertEqual([item["level"] for item in issues], ["error", "warning", "error"])
+        self.assertEqual(
+            next(
+                item["level"]
+                for item in archeologist.search_logs()
+                if "libgpg-error" in item["message"]
+            ),
+            "info",
+        )
+        self.assertEqual(len(searched), 1)
+        self.assertIn("container", searched[0]["message"])
+
+    def test_librarian_without_subcommand_launches_tui(self):
+        with (
+            patch.object(cli_main.sys, "argv", ["pacmonster", "librarian"]),
+            patch.object(cli_main, "_run_tui") as run_tui,
+        ):
+            cli_main._dispatch()
+
+        run_tui.assert_called_once_with("librarian")
+
+    def test_librarian_tui_alias_launches_tui(self):
+        with (
+            patch.object(cli_main.sys, "argv", ["pacmonster", "librarian", "tui"]),
+            patch.object(cli_main, "_run_tui") as run_tui,
+        ):
+            cli_main._dispatch()
+
+        run_tui.assert_called_once_with("librarian")
+
+    def test_librarian_subcommands_remain_direct_cli_commands(self):
+        with (
+            patch.object(cli_main.sys, "argv", ["pacmonster", "librarian", "list", "--json"]),
+            patch.object(cli_main, "librarian_command") as librarian_cli,
+        ):
+            cli_main._dispatch()
+
+        librarian_cli.assert_called_once_with("list", None, json_output=True)
 
     def test_ghosthunter_finds_tui_built_from_its_project_directory(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -633,7 +739,7 @@ class PackageUpdatesTests(unittest.TestCase):
             patch.object(update, "execute_action", side_effect=run_action),
             patch.object(update, "emit_ghost_event"),
             patch.object(update, "emit_pool_event"),
-            patch.object(update, "GHOSTS", 2),
+            patch.object(update, "get_worker_count", return_value=2),
             redirect_stdout(StringIO()),
         ):
             results = update.perform_update(assume_yes=True)
@@ -641,6 +747,92 @@ class PackageUpdatesTests(unittest.TestCase):
         self.assertEqual(len(results), len(actions))
         self.assertTrue(all(result["success"] for result in results))
         self.assertEqual(maximum_active, 2)
+
+    def test_update_worker_count_respects_cpu_memory_load_and_safety_cap(self):
+        with (
+            patch.object(update, "effective_cpu_cores", return_value=16),
+            patch.object(
+                update,
+                "available_memory_bytes",
+                return_value=64 * 1024**3,
+            ),
+            patch.object(update.os, "getloadavg", return_value=(0.0, 0.0, 0.0)),
+        ):
+            self.assertEqual(update.get_worker_count(20), 8)
+
+        with (
+            patch.object(update, "effective_cpu_cores", return_value=4),
+            patch.object(
+                update,
+                "available_memory_bytes",
+                return_value=64 * 1024**3,
+            ),
+            patch.object(update.os, "getloadavg", return_value=(0.0, 0.0, 0.0)),
+        ):
+            self.assertEqual(update.get_worker_count(10), 2)
+
+        with (
+            patch.object(update, "effective_cpu_cores", return_value=16),
+            patch.object(
+                update,
+                "available_memory_bytes",
+                return_value=1024**3,
+            ),
+            patch.object(update.os, "getloadavg", return_value=(0.0, 0.0, 0.0)),
+        ):
+            self.assertEqual(update.get_worker_count(10), 1)
+
+        with (
+            patch.object(update, "effective_cpu_cores", return_value=8),
+            patch.object(
+                update,
+                "available_memory_bytes",
+                return_value=64 * 1024**3,
+            ),
+            patch.object(update.os, "getloadavg", return_value=(7.0, 0.0, 0.0)),
+        ):
+            self.assertEqual(update.get_worker_count(10), 1)
+
+    def test_ghost_progress_is_capped_and_reset_on_release(self):
+        pool = update.GhostPool(max_ghosts=1, cpu_cores=2)
+        ghost = pool.allocate("host", estimated_seconds=10)
+
+        pool.update_progress(ghost.id, 7)
+        snapshot = pool.snapshot()
+        self.assertEqual(snapshot["cpu_cores"], 2)
+        self.assertEqual(snapshot["ghosts"][0]["progress"], 70)
+
+        pool.update_progress(ghost.id, 20)
+        self.assertEqual(pool.snapshot()["ghosts"][0]["progress"], 95)
+
+        pool.set_limit(1)
+        self.assertEqual(pool.snapshot()["capacity"], 1)
+
+        pool.release(ghost.id)
+        self.assertIsNone(pool.snapshot()["ghosts"][0]["progress"])
+
+    def test_progress_estimate_uses_recent_successful_target_runs(self):
+        history = [
+            {
+                "type": "update",
+                "details": {
+                    "targets": [
+                        {"id": "host", "duration": 30, "success": True},
+                        {"id": "host", "duration": 90, "success": False},
+                    ]
+                },
+            },
+            {
+                "type": "update",
+                "details": {
+                    "targets": [{"id": "host", "duration": 50, "success": True}]
+                },
+            },
+        ]
+        with patch("pacmonster.history.load_history", return_value=history):
+            estimate = update.estimate_action_seconds({"id": "host"})
+
+        self.assertEqual(estimate, 40)
 
     def test_update_interrupt_stops_runner_and_releases_lock(self):
         runner = Mock()

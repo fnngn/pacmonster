@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: pacmonster
-Version: 0.9.4
+Version: 0.9.5
 Summary: Proxmox update manager
 Requires-Python: >=3.11
 License-File: LICENSE

@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 from .cache import CACHE_DIR, load_inventory_cache, load_status_cache
 from .discovery import get_host_distro, get_package_manager
@@ -216,5 +217,45 @@ def run_doctor():
         "check active processes or lock files: " + ", ".join(lock_details)
         if lock_details else "no known package-manager process or lock file",
     )
+
+    return checks
+
+
+def run_installation_checks():
+    """Check that the Python package, CLI entry point, and TUI are installed."""
+
+    checks = []
+
+    def add(name, status, detail):
+        checks.append({"name": name, "status": status, "detail": detail})
+
+    package_path = Path(__file__).resolve()
+    add(
+        "Pacmonster Python package",
+        "ok" if package_path.is_file() else "fail",
+        f"loaded from {package_path}",
+    )
+    add(
+        "Python interpreter",
+        "ok" if Path(sys.executable).is_file() else "fail",
+        sys.executable,
+    )
+
+    cli_path = shutil.which("pacmonster")
+    add(
+        "Pacmonster CLI entry point",
+        "ok" if cli_path else "warning",
+        cli_path or "not found on PATH; run the installed CLI through its absolute path",
+    )
+
+    tui_path = shutil.which("pacmonster-tui")
+    if tui_path:
+        add("Pacmonster TUI", "ok", tui_path)
+    else:
+        add(
+            "Pacmonster TUI",
+            "warning",
+            "not found on PATH; build it with `cd tui && cargo build` or run the installer",
+        )
 
     return checks
