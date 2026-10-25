@@ -1,683 +1,257 @@
 # Pacmonster
 
-Pacmonster is a lightweight Linux and Proxmox update orchestrator designed for homelabs and small infrastructure environments.
+Pacmonster is a Linux and Proxmox update orchestrator for homelabs and small
+infrastructure environments. Its task-focused terminal interfaces put updates,
+diagnostics, inventory, logs, and package recovery behind one consistent
+command-line application.
 
-It discovers systems, identifies supported package managers and executes updates through a parallel worker scheduler while preserving native package manager behavior.
-
-No agents.
-
-No web UI.
-
-No daemon.
-
-No database.
-
-Just:
-
-```bash
-sudo pacmonster
-```
-
----
-
-# Table of Contents
-
-- [Mission](#mission)
-- [Current Status](#current-status)
-- [Architecture](#architecture)
-- [Features](#features)
-- [Supported Platforms](#supported-platforms)
-- [Installation](#installation)
-- [Commands](#commands)
-- [Terminal Interfaces](#terminal-interfaces)
-- [GhostPool Scheduler](#ghostpool-scheduler)
-- [Runtime State](#runtime-state)
-- [Dashboard](#dashboard)
-- [Update Workflow](#update-workflow)
-- [Package Managers](#package-managers)
-- [Exit Codes](#exit-codes)
-- [Cache Files](#cache-files)
-- [Design Goals](#design-goals)
-- [Roadmap](#roadmap)
-- [Development](#development)
-- [Credits](#credits)
-- [License](#license)
-
----
-
-# Mission
-
-Pacmonster provides a consistent operational interface for maintaining heterogeneous Linux environments. It orchestrates native package managers rather than replacing them.
-
----
-
-# Current Status
-
-Current release: **0.9.5** (CLI and TUI).
-
-Implemented:
-
-- Automatic inventory discovery
-- Multi-distribution support
-- Package manager abstraction
-- GhostPool scheduler
-- Parallel update execution
-- Runtime state snapshots
-- JSON event streams
-- Rust terminal dashboard
-- Active worker tracking
-- Update history
-- Status caching
-- Doctor diagnostics
-- Package-state snapshots and cached-archive recovery
-- Proxmox-aware discovery
-
----
-
-# Architecture
+It uses native package managers rather than replacing them. There is no daemon,
+web UI, or database.
 
 ```text
-pacmonster
-    │
-    ▼
-Inventory
-    │
-    ▼
-Update Planner
-    │
-    ▼
-GhostPool Scheduler
-    │
-    ├── Update Workers
-    │
-    ├── JSON Event Stream
-    │
-    └── Runtime State
-            │
-            ▼
-        Rust Dashboard
+Start
+ ├─ Ghosthunter    Update systems
+ ├─ Witchdoctor    Diagnose systems and the installation
+ ├─ Librarian      Browse inventory and package snapshots
+ ├─ Archeologist   Search logs
+ ├─ Restorer       Recover package versions from snapshots
+ └─ Advisor        Read help, the handbook, and project information
 ```
 
----
+Current release: **0.9.6**.
 
-# Features
+## Contents
 
-- Parallel update execution
-- Ghost worker scheduler
-- Native package manager output
-- Runtime measurements
-- Execution history
-- Runtime state snapshots
-- JSON output support
-- Inventory caching
-- Status caching
-- Interactive updates
-- Unattended updates
-- Doctor diagnostics
-- Interactive Doctor diagnostics (`witchdoctor`)
-- Pacmonster installation checks
-- Archeologist log search and warning/error filtering
-- Start menu and Advisor help/handbook interface
-- Proxmox-aware discovery
-- Cron-friendly exit codes
+- [Interfaces](#interfaces)
+  - [Ghosthunter and updates](#ghosthunter-and-updates)
+  - [Other interface actions](#other-interface-actions)
+- [Installation](#installation)
+- [CLI reference](#cli-reference)
+- [Supported systems](#supported-systems)
+- [Snapshots and recovery](#snapshots-and-recovery)
+- [Update scheduling and safety](#update-scheduling-and-safety)
+- [Local data](#local-data)
+- [Development](#development)
+- [License](#license)
 
----
+## Interfaces
 
-# Supported Platforms
+Open the main menu with:
 
-## Hosts
+```bash
+pacmonster start
+```
 
-| Distribution | Manager |
-|--------------|----------|
-| Debian | apt |
-| Proxmox VE | apt |
-| Arch Linux | pacman |
-| Fedora | dnf |
+| Interface | Command | What it does |
+| --- | --- | --- |
+| **Ghosthunter** | `sudo pacmonster ghosthunter` | Choose to run all planned updates, run with package-manager confirmation, or preview planned actions. |
+| **Witchdoctor** | `sudo pacmonster witchdoctor` | Run system diagnostics, check the Pacmonster installation, refresh cached status, and view compact or detailed status. |
+| **Librarian** | `sudo pacmonster librarian` | Browse and filter snapshots, create snapshots, refresh or view inventory, and read update history. |
+| **Archeologist** | `sudo pacmonster archeologist` | Browse package-manager logs, filter likely warnings/errors, or search log text. |
+| **Restorer** | `sudo pacmonster restorer` | Inspect snapshots and restore package versions after an explicit confirmation. |
+| **Advisor** | `pacmonster advisor` | Browse command help, this README, the license, and developer information. |
 
-## Containers
+The interfaces use parchment as the main color with petrol and gold accents.
+Use `↑`/`↓` or `j`/`k` to navigate, `Enter` to choose, `Esc` to return, and
+`q` to leave. Long text panes support `PgUp`/`PgDn`, `Home`, and `End`.
 
-| Distribution | Manager |
-|--------------|----------|
-| Debian | apt |
-| Arch Linux | pacman |
-| Fedora | dnf |
+### Ghosthunter and updates
 
-## Virtual Machines
+Running `pacmonster ghosthunter` opens Ghosthunter's action menu. **Run all
+updates** skips Pacmonster's extra confirmation prompt; **Run with
+confirmation** asks before starting the update run; **Preview update** displays
+the planned actions without applying them.
 
-VM discovery is available; VM status checks and updates are not implemented.
+To launch the update view with confirmation directly:
 
----
+```bash
+sudo pacmonster ghosthunter --confirm
+```
 
-# Installation
+The ordinary update commands are also available:
 
-Clone repository:
+```bash
+sudo pacmonster                 # Interactive update
+sudo pacmonster update          # Interactive update
+sudo pacmonster update --yes    # Do not ask before starting
+sudo pacmonster dry-run         # Preview planned commands
+```
+
+During an update, Ghosthunter streams package-manager output and shows the
+worker pool. Pressing `q` or `Ctrl+C` requests a safe interrupt; Pacmonster
+waits for package-manager processes to stop and escalates only if necessary.
+
+### Other interface actions
+
+The Librarian's menu offers the same inventory and history functions as the
+CLI. Its snapshot browser can show every snapshot or filter by target ID.
+
+The Witchdoctor separates live diagnostics and installation checks from cached
+status inspection. `Refresh Status` updates the cache before the status views
+are opened.
+
+The Archeologist can show all available Pacmonster and package-manager log
+records, reduce results to likely warnings and errors, or search by text.
+
+Restorer only restores snapshots that include the required package archives.
+It previews the changes and requires confirmation before installing packages.
+`--yes` is available for scripted restores; see [Snapshots and recovery](#snapshots-and-recovery).
+
+## Installation
+
+Pacmonster targets Linux hosts with Python 3.11 or newer. Install system-wide
+from a checkout:
 
 ```bash
 git clone https://github.com/fnngn/pacmonster.git
 cd pacmonster
-```
-
-Install the system-wide CLI (the installer requests `sudo` if needed):
-
-```bash
 ./install.sh
 ```
 
-The installer checks for a native C compiler, installs the platform build
-tools if needed, ensures Rust/Cargo 1.85 or newer is available, builds the
-TUI, installs `pacmonster-tui`, and prepares the root-owned package snapshot
-store. If a suitable system Rust toolchain is unavailable, it bootstraps the
-official stable toolchain through rustup.
+The installer builds and installs both `pacmonster` and its Rust TUI. Building
+the TUI requires Rust/Cargo 1.85 or newer and a native C compiler; the installer
+checks for build tools and can bootstrap the stable Rust toolchain if needed.
+The command is installed in `/usr/local/bin`, so `sudo pacmonster` does not rely
+on a user's private executable path.
 
-Verify the installation:
-
-```bash
-sudo pacmonster help
-```
-
-The installer places the command in `/usr/local/bin`, so it is available as `sudo pacmonster` without relying on a user's `~/.local/bin`. Re-run the installer after changing the source code to update the installed copy.
-
-Pacmonster needs root privileges for host package updates and Proxmox container discovery. It also needs the relevant native package manager and, for Proxmox discovery, `pct` and `qm`.
-
----
-
-# Commands
-
-## Update systems
-
-Running Pacmonster without a subcommand starts an interactive update. Updates are real package-manager operations.
-
-Interactive update:
+Check the installation:
 
 ```bash
-sudo pacmonster
-```
-
-Equivalent explicit command:
-
-```bash
-sudo pacmonster update
-```
-
-Unattended update (does not prompt for confirmation):
-
-```bash
-sudo pacmonster update --yes
-```
-
-## Inventory and status
-
-```bash
-sudo pacmonster refresh
-sudo pacmonster inventory
-sudo pacmonster refresh-status
-sudo pacmonster status
-```
-
-`inventory` and `status` display cached snapshots. Run `refresh` or `refresh-status` to update those caches. Add `--json` to either display command for JSON output; status also supports:
-
-```bash
-sudo pacmonster status --verbose
-```
-
-## Other commands
-
-```bash
-sudo pacmonster start
-sudo pacmonster ghosthunter
-sudo pacmonster witchdoctor
-pacmonster librarian
-pacmonster archeologist
-pacmonster advisor
-pacmonster help
-sudo pacmonster dry-run
-sudo pacmonster history
-sudo pacmonster doctor
-sudo pacmonster witchdoctor
 sudo pacmonster doctor --installation
-sudo pacmonster archeologist
-sudo pacmonster archeologist issues
-sudo pacmonster archeologist search "disk space"
 ```
 
-`pacmonster start` opens the main menu for Ghosthunter, Witchdoctor,
-Librarian, Archeologist, Advisor, and Restaurator. Restaurator currently opens
-its snapshot list; use `sudo pacmonster restaurator restore SNAPSHOT_ID` to
-restore a selected snapshot.
-`dry-run` prints the planned update commands without executing them.
-`witchdoctor` opens an old-library-themed diagnostic menu with system and
-Pacmonster installation checks. `doctor --installation` runs the installation
-checks directly. `archeologist` opens a log browser; its `issues` view reduces
-records to likely warnings and errors, while `search QUERY` finds matching
-text. The CLI also accepts `archeologist all|issues|search QUERY --json`.
-`pacmonster advisor` opens the reference-room interface. The plain
-`pacmonster help` command displays available commands; `pacmonster help --json`
-returns them as JSON for integrations.
+Package operations and Proxmox discovery require root privileges. Pacmonster
+also needs the native package manager for each system it updates. On Proxmox,
+`pct` and `qm` are used for container and VM discovery. VM update and status
+support are not currently implemented.
 
-## Terminal Interfaces
+## CLI reference
 
-Pacmonster's terminal interfaces are task-oriented front ends for the CLI:
+Every interface has a corresponding CLI command. `pacmonster help` prints the
+tabular command reference with a short description for each function;
+`pacmonster help --json` returns the command names as a JSON list.
 
-| Interface | Command | Purpose |
-|-----------|---------|---------|
-| Start | `pacmonster start` | Main menu for all interfaces |
-| Ghosthunter | `sudo pacmonster ghosthunter` | Run planned updates and monitor workers |
-| Witchdoctor | `sudo pacmonster witchdoctor` | Diagnose the host and check the installation |
-| Librarian | `pacmonster librarian` | Browse and create package recovery snapshots |
-| Archeologist | `pacmonster archeologist` | Search logs and filter likely warnings/errors |
-| Advisor | `pacmonster advisor` | Browse CLI help, README, license, and developer information |
+| Command | Description |
+| --- | --- |
+| `pacmonster refresh` | Rebuild the system inventory cache. |
+| `pacmonster inventory [--json]` | Show cached inventory. |
+| `pacmonster refresh-status` | Refresh inventory and cached package status. |
+| `pacmonster status [--verbose] [--json]` | Show cached status, optionally including package names. |
+| `pacmonster doctor [--installation] [--json]` | Run system or installation checks. |
+| `pacmonster dry-run [--json]` | Show planned update actions without applying them. |
+| `pacmonster history [--json]` | Show recent maintenance history. |
+| `pacmonster librarian list [TARGET_ID] [--json]` | List snapshots, optionally for one target. |
+| `pacmonster librarian snapshot [TARGET_ID] [--json]` | Create snapshots for all targets or one target. |
+| `pacmonster librarian show SNAPSHOT_ID [--json]` | Show snapshot details. |
+| `pacmonster archeologist all` / `pacmonster archeologist issues` | Read all log records or likely issues; both accept `--json`. |
+| `pacmonster archeologist search QUERY [--json]` | Search log records. |
+| `pacmonster restorer list [--json]` | List snapshots available for recovery. |
+| `pacmonster restorer restore SNAPSHOT_ID [--yes] [--json]` | Restore package versions from a snapshot. |
 
-The interfaces share a parchment, petrol, and gold palette. In scrollable
-views, use the arrow keys or `PgUp`/`PgDn`; `Home` and `End` jump to the
-beginning and end, while `Esc` returns to the previous menu. The Advisor loads
-its handbook from `README.md` and its license text from `LICENSE` (both
-embedded during compilation, with runtime file overrides for checkout or
-packaged copies). Command help comes from the CLI's JSON output. Thus the
-in-app handbook follows the README instead of maintaining a separate copy.
+`--json` is intended for scripts and integrations. Commands that discover
+systems, inspect package state, or change packages generally need `sudo`.
 
-## Package snapshots and recovery
+## Supported systems
 
-Before starting updates, Pacmonster's Librarian saves each target's installed
-package/version manifest and only the matching package archives needed for
-recovery. Archives are content-addressed and shared between snapshots: unchanged
-package files are stored once, while newly changed package files add only their
-own size. Identical archives from different LXC containers (or the host) also
-share a blob, but only after their content hashes match; matching package names
-and versions alone are not treated as proof that the files are identical. When
-a retained blob already matches an LXC package, Pacmonster verifies its hash
-inside the container and avoids copying the archive to the host again. The
-three newest manifests per target are kept under
-`/var/lib/pacmonster/snapshots/`; blobs no longer referenced by a retained
-snapshot are removed.
-Doctor also runs the host package manager's native consistency check.
-Snapshots require enough free disk space; check `sudo pacmonster doctor` for
-storage and archive availability.
-Long-running snapshot creation reports package and archive progress. Press
-`Ctrl+C` to cancel; incomplete snapshot metadata and temporary package files are
-cleaned up, and Pacmonster exits with status 130.
+Pacmonster discovers supported Linux systems on the host and, on Proxmox,
+Linux containers.
+
+| Distribution family | Package manager |
+| --- | --- |
+| Debian and Proxmox VE | APT |
+| Arch Linux | pacman |
+| Fedora | DNF |
+
+VM discovery is available, but VM status checks and updates are not supported.
+
+## Snapshots and recovery
+
+Before updates, Pacmonster's Librarian saves each target's installed package
+manifest and matching cached package archives. Snapshots are stored under
+`/var/lib/pacmonster/snapshots/`. Package archives use content-addressed blobs,
+so identical files may be shared between snapshots; a content hash is checked
+before treating files as identical. The three newest manifests per target are
+retained, and unreferenced blobs are removed.
+
+Create and inspect snapshots:
 
 ```bash
 sudo pacmonster librarian list
 sudo pacmonster librarian snapshot [TARGET_ID]
 sudo pacmonster librarian show SNAPSHOT_ID
-sudo pacmonster restaurator list
-sudo pacmonster restaurator restore SNAPSHOT_ID
+sudo pacmonster restorer list
 ```
 
-Run `sudo pacmonster librarian` to enter the Librarian's old-library-inspired
-interface. Browse the catalogue, create new volumes of package snapshots, and
-inspect their records. The explicit `librarian list|snapshot|show` commands
-remain available for scripts and direct CLI use.
-
-Restoration compares installed versions with the selected snapshot and uses
-matching package archives from that snapshot. It previews the changes and
-prompts before changing packages; `--yes` skips that confirmation. If an
-exact-version archive is missing, restoration stops without installing a
-partial set. A manifest-only snapshot can help diagnose versions but cannot
-restore packages without cached archives or repository access. This restores
-package versions only; packages added after the snapshot are left installed.
-This is not a filesystem, configuration, or data backup.
-
----
-
-# GhostPool Scheduler
-
-Pacmonster executes updates through GhostPool. Each Ghost is one execution
-slot; targets are dispatched in FIFO order, and completed slots are reused
-until the queue is empty. Worker count is based on the CPUs available to the
-process (including CPU affinity and detected cgroup quotas), with at most half
-of those cores used (with a minimum of one worker when work exists) and an
-overall cap of eight workers. The limit is
-re-evaluated while scheduling: available memory and current system load can
-reduce how many new targets start without interrupting work already underway.
-At least one worker is kept when there is work to do.
-
-When available, memory is measured against a 1 GiB reserve and a 1 GiB
-allowance per worker. The update TUI displays progress estimates based on
-recent successful runs for the same target. Until a target has history, its
-progress bar is indeterminate rather than presenting a fabricated percentage.
-
-Lifecycle:
-
-```text
-Idle
-  │
-  ▼
-Assigned
-  │
-  ▼
-Updating
-  │
-  ▼
-Released
-  │
-  ▼
-Idle
-```
-
-The scheduler continuously tracks:
-
-- Active workers
-- Idle workers
-- Pool capacity
-- Current worker assignments
-- Per-target elapsed time and estimated progress
-
----
-
-# Runtime State
-
-Runtime information is exported under:
-
-```text
-/var/tmp/
-```
-
-Event and state files include the effective user ID in their names so root and regular-user runs do not conflict over file ownership.
-
-Package snapshots are stored separately under `/var/lib/pacmonster/snapshots/`.
-
-## Event stream
-
-```text
-/var/tmp/pacmonster-events-<uid>.jsonl
-```
-
-Append-only scheduler event log. `<uid>` is the effective user ID of the Pacmonster process.
-
-Example:
-
-```json
-{
-  "event": "assigned",
-  "ghost": 1,
-  "target": "pve"
-}
-```
-
-## Scheduler state
-
-```text
-/var/tmp/pacmonster-state-<uid>.json
-```
-
-Current runtime snapshot, also separated by effective user ID.
-
-Example:
-
-```json
-{
-  "active": 2,
-  "idle": 0,
-  "capacity": 2,
-  "cpu_cores": 4,
-  "ghosts": [
-    {
-      "id": 1,
-      "busy": true,
-      "target": "pihole",
-      "progress": 70,
-      "elapsed_seconds": 42.0,
-      "estimated_seconds": 60.0
-    },
-    {
-      "id": 4,
-      "busy": true,
-      "target": "arch-template",
-      "progress": null,
-      "elapsed_seconds": 11.0,
-      "estimated_seconds": null
-    }
-  ]
-}
-```
-
----
-
-# Dashboard
-
-A lightweight Rust TUI provides live scheduler visibility, the main menu, and
-the Ghosthunter, Witchdoctor, Librarian, Archeologist, and Advisor
-interfaces. Its text panes support `↑`/`↓`, `PgUp`/`PgDn`, and `Home`/`End`;
-the update view follows new output until you scroll away, and `End` resumes
-following.
-
-Current dashboard:
-
-```text
-THE GHOST POOL
-
-ᗣ Active      2
-◌ Idle        0
-◌ Available   0
-
-ᗣ G01 [#######---] [~70%] pihole
-ᗣ G02 [---###----] [estimating] arch-template
-```
-
-The TUI builds with Rust/Cargo **1.85 or newer**; Proxmox utilities are not
-needed to compile or open the dashboard. Install a Rust toolchain if `cargo`
-is not available, then build from the repository:
+Restore a snapshot:
 
 ```bash
-cd tui
-cargo --version
-cargo build
-cargo run
+sudo pacmonster restorer restore SNAPSHOT_ID
+sudo pacmonster restorer restore SNAPSHOT_ID --yes
 ```
 
-`cargo run` opens the dashboard without starting updates. To test the full
-update flow directly from the checkout, run:
+Restorer compares installed versions with the selected snapshot and previews
+the package changes. It stops if the complete set of exact-version archives is
+not available rather than applying a partial restore. Manifest-only snapshots
+are useful for reference but cannot restore package files. A restore changes
+package versions only; it does not remove packages added later and is not a
+backup of configuration, user data, or the filesystem. Snapshot creation needs
+enough free disk space; `sudo pacmonster doctor` reports relevant checks.
 
-```bash
-cargo run -- --run-updates
-```
+## Update scheduling and safety
 
-When the `pacmonster` command is installed, the TUI uses it. Otherwise a TUI
-built from this checkout runs the Python module from the repository source.
-Install the optimized executable for the `ghosthunter` CLI command:
+GhostPool schedules targets in FIFO order and reuses workers as they finish.
+Worker capacity is derived from the CPUs available to Pacmonster, including
+CPU affinity and detected cgroup quotas. It uses at most half of those cores,
+with at least one worker when there is work, and has an overall limit of eight.
+Available memory and current system load can further reduce the number of new
+workers; already-running package operations are not interrupted just to lower
+the worker count. A memory reserve and per-worker allowance also constrain
+concurrency when memory information is available.
 
-```bash
-cargo build --release
-sudo install -m 755 target/release/pacmonster-tui /usr/local/bin/pacmonster-tui
-```
+The update TUI estimates progress from recent successful runs for the same
+target. Until there is enough history, it displays indeterminate progress
+rather than inventing a percentage.
 
-Start the update workflow inside the TUI:
+## Local data
 
-```bash
-sudo pacmonster ghosthunter
-```
+Inventory, status, and history caches live in
+`~/.cache/pacmonster/` for the user running the command (with `sudo`, this is
+typically root's home directory). Runtime state and event logs are written
+under `/var/tmp/` with the effective user ID in their filenames.
 
-Open the Doctor diagnostics in the TUI:
+| Data | Location |
+| --- | --- |
+| Inventory | `~/.cache/pacmonster/inventory.json` |
+| Status | `~/.cache/pacmonster/status.json` |
+| History | `~/.cache/pacmonster/history.json` |
+| Update state | `/var/tmp/pacmonster-state-UID.json` |
+| Update events | `/var/tmp/pacmonster-events-UID.jsonl` |
+| Snapshot manifests and archives | `/var/lib/pacmonster/snapshots/` |
 
-```bash
-sudo pacmonster witchdoctor
-```
+## Development
 
-Ghosthunter starts `pacmonster update --yes`, so it does not stop at the
-interactive `Continue update run?` confirmation. It streams the update output
-into the dashboard and asks whether to exit after all targets finish. During a
-run, `q` or `Ctrl+C` requests an interrupt and lets Pacmonster stop
-package-manager processes safely. The update workflow itself requires a Linux
-host with a supported package manager; LXC discovery and updates require
-Proxmox's `pct` command.
-Witchdoctor provides a menu for host diagnostics and Pacmonster installation
-checks. The Archeologist can browse available Pacmonster and package-manager
-logs, reduce them to likely warnings/errors, or search for a term. Both
-interfaces use the standard parchment, petrol, and gold palette; result panes
-can be scrolled with the arrow and page keys. The Librarian offers a snapshot
-catalogue and creation flow. The Advisor shows CLI help, a readable version
-of this README, the full license text, and project/build information.
-
----
-
-# Update workflow
-
-```text
-Inventory
-    ↓
-Package Manager Detection
-    ↓
-Build Update Plan
-    ↓
-GhostPool Scheduler
-    ↓
-Parallel Updates
-    ↓
-State Snapshot
-    ↓
-Rust Dashboard
-```
-
----
-
-# Package Managers
-
-## APT
-
-```bash
-apt-get update && apt-get upgrade -y
-```
-
-## Pacman
-
-```bash
-pacman -Syu --noconfirm
-```
-
-## DNF
-
-```bash
-dnf upgrade -y
-```
-
----
-
-# Exit Codes
-
-| Code | Meaning |
-|--------|----------|
-| 0 | Success |
-| 1 | Update failure |
-| 2 | User aborted |
-| 3 | Update lock active |
-| 4 | Runtime error |
-| 130 | Update interrupted with Ctrl+C |
-
-When interrupted, Pacmonster sends `SIGINT` to active package-manager process groups. If they do not exit, it escalates to `SIGTERM` and then `SIGKILL`.
-
----
-
-# Cache Files
-
-Pacmonster stores local cache data under:
-
-```text
-~/.cache/pacmonster/
-```
-
-Examples:
-
-```text
-history.json
-inventory.json
-status.json
-```
-
----
-
-# Design Goals
-
-Pacmonster is intended for:
-
-- Homelabs
-- Proxmox environments
-- Personal infrastructure
-- Small Linux environments
-- Routine maintenance workflows
-
-Pacmonster is intentionally not a replacement for:
-
-- Ansible
-- Puppet
-- Chef
-- SaltStack
-- Kubernetes
-
-The focus is operational simplicity.
-
----
-
-# Roadmap
-
-## v1.0
-
-- Dashboard cleanup
-- Better terminal restoration
-- Failure visualization
-- Retry support
-- Runtime metrics
-- Host completion tracking
-- Stable dashboard state schema
-
-## Future
-
-- VM update support
-- VM status support
-- Reboot tracking
-- Maintenance windows
-- Additional package managers
-
----
-
-# Credits
-
-Maintenance changes were made with assistance from GitHub Copilot.
-
----
-
-# Development
-
-Run directly:
-
-```bash
-python3 -m pacmonster.main
-```
-
-Python syntax checks:
+Run Python checks from the repository root:
 
 ```bash
 python3 -m py_compile pacmonster/*.py
-```
-
-Run tests:
-
-```bash
 python3 -m unittest discover -s tests
 ```
 
-Dashboard:
+Build and test the TUI:
 
 ```bash
-cd tui
-cargo build
-cargo run
+cargo fmt --manifest-path tui/Cargo.toml -- --check
+cargo test --manifest-path tui/Cargo.toml
+cargo build --release --manifest-path tui/Cargo.toml
 ```
 
-Run the update or Doctor workflow from the source checkout:
+For local TUI development, `cargo run --manifest-path tui/Cargo.toml` opens the
+dashboard. Its maintenance modes can be tested with `--run-ghosthunter`,
+`--run-doctor`, `--run-librarian`, `--run-archeologist`, `--run-restorer`, or
+`--run-advisor`. Running the installer again after source changes updates the
+system-wide installation.
 
-```bash
-cargo run -- --run-updates
-cargo run -- --run-doctor
-cargo run -- --run-librarian
-cargo run -- --run-archeologist
-cargo run -- --run-advisor
-```
+## License
 
----
-
-# License
-
-GNU General Public License v3.0
-
-See LICENSE for details.
+Pacmonster is licensed under the GNU General Public License v3.0. See
+[LICENSE](LICENSE).

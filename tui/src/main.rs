@@ -30,6 +30,13 @@ struct StateGhost {
     elapsed_seconds: f64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GhosthunterView {
+    Menu,
+    Preview,
+    Dashboard,
+}
+
 #[derive(Clone, Debug, serde::Deserialize)]
 struct StateFile {
     active: usize,
@@ -94,18 +101,73 @@ const START_MENU_ENTRIES: [(&str, &str); 6] = [
         "Search package-manager logs and investigate warnings",
     ),
     (
+        "RESTORER",
+        "Review snapshots and restore selected package states",
+    ),
+    (
         "ADVISOR",
         "Read command help, project guide, and developer notes",
     ),
-    ("RESTORATOR", "Open the recovery snapshot list in the CLI"),
 ];
-const START_TUI_MODES: [&str; 5] = [
-    "--run-updates",
+const GHOSTHUNTER_MENU_ENTRIES: [(&str, &str); 3] = [
+    (
+        "RUN ALL UPDATES",
+        "Start the planned updates without an extra confirmation prompt",
+    ),
+    ("RUN WITH CONFIRMATION", "Ask before the update run begins"),
+    (
+        "PREVIEW UPDATE",
+        "Review planned package actions without changing systems",
+    ),
+];
+const START_TUI_MODES: [&str; 6] = [
+    "--run-ghosthunter",
     "--run-doctor",
     "--run-librarian",
     "--run-archeologist",
+    "--run-restorer",
     "--run-advisor",
 ];
+const LIBRARIAN_MENU_ENTRIES: [(&str, &str); 8] = [
+    (
+        "BROWSE THE CATALOGUE",
+        "Consult saved package records by system and date",
+    ),
+    (
+        "BROWSE ONE SYSTEM",
+        "Filter snapshot records by host or container ID",
+    ),
+    (
+        "ENTER NEW VOLUMES",
+        "Preserve package versions and archives for all systems",
+    ),
+    (
+        "ENTER ONE NEW VOLUME",
+        "Create a snapshot for one selected system ID",
+    ),
+    (
+        "REFRESH INVENTORY",
+        "Rediscover supported hosts and containers",
+    ),
+    (
+        "VIEW INVENTORY",
+        "Browse the latest cached system inventory",
+    ),
+    ("UPDATE HISTORY", "Review previous maintenance operations"),
+    ("LEAVE THE READING ROOM", "Return to the command line"),
+];
+const LIBRARIAN_MENU_COMMANDS: [&[&str]; 8] = [
+    &[],
+    &[],
+    &[],
+    &[],
+    &["refresh"],
+    &["inventory", "--json"],
+    &["history", "--json"],
+    &[],
+];
+const MENU_KEYS: &str = "↑/↓ J/K MOVE  •  1-N SELECT  •  HOME/END  •  ENTER OPEN  •  ESC/Q LEAVE";
+const TEXT_KEYS: &str = "↑/↓ J/K READ  •  PGUP/PGDN PAGE  •  HOME/END  •  ESC BACK  •  Q EXIT";
 const EMBEDDED_README: &str = include_str!("../../README.md");
 const EMBEDDED_LICENSE: &str = include_str!("../../LICENSE");
 
@@ -128,8 +190,18 @@ struct LibrarianSnapshot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LibrarianView {
     Menu,
+    TargetInput,
     SnapshotList,
     SnapshotDetail,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RestorerView {
+    Menu,
+    SnapshotList,
+    SnapshotDetail,
+    ConfirmRestore,
+    Result,
 }
 
 const PARCHMENT: Color = Color::Rgb(222, 205, 166);
@@ -175,6 +247,8 @@ fn render_doctor(
     frame: &mut ratatui::Frame<'_>,
     checks: &[DoctorCheck],
     show_results: bool,
+    command_output: bool,
+    operation_lines: &[String],
     selection: usize,
     notice: &str,
     scroll_offset: &mut u16,
@@ -219,7 +293,12 @@ fn render_doctor(
         title_area,
     );
 
-    let lines = if show_results {
+    let lines = if show_results && command_output {
+        operation_lines
+            .iter()
+            .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(PARCHMENT))))
+            .collect()
+    } else if show_results {
         let mut report = vec![
             Line::from(Span::styled(
                 format!(
@@ -264,6 +343,9 @@ fn render_doctor(
                 "CHECK INSTALLATION",
                 "Verify Pacmonster CLI, Python package, and TUI",
             ),
+            ("REFRESH STATUS", "Update cached package status"),
+            ("VIEW STATUS", "Browse the latest cached update status"),
+            ("VIEW DETAILED STATUS", "Include pending package names"),
             ("LEAVE THE INFIRMARY", "Return to the command line"),
         ]
         .iter()
@@ -320,11 +402,7 @@ fn render_doctor(
             .scroll((*scroll_offset, 0)),
         report_area,
     );
-    let footer = if show_results {
-        "↑/↓ READ  •  PGUP/PGDN PAGE  •  ESC RETURN TO MENU  •  Q EXIT"
-    } else {
-        "↑/↓ CHOOSE  •  ENTER OPEN  •  Q LEAVE"
-    };
+    let footer = if show_results { TEXT_KEYS } else { MENU_KEYS };
     frame.render_widget(
         Paragraph::new(Span::styled(footer, Style::default().fg(PETROL))),
         chunks[2],
@@ -440,7 +518,10 @@ fn render_archeologist(
                         format!("{} {}: ", record.timestamp, record.source),
                         Style::default().fg(PETROL),
                     ),
-                    Span::styled(record.message.clone(), Style::default().fg(PARCHMENT)),
+                    Span::styled(
+                        format_log_message(&record.message),
+                        Style::default().fg(PARCHMENT),
+                    ),
                 ])
             })
             .collect(),
@@ -468,12 +549,10 @@ fn render_archeologist(
         inner,
     );
     let footer = match view {
-        ArcheologistView::Results => {
-            "↑/↓ READ  •  PGUP/PGDN PAGE  •  ESC RETURN TO MENU  •  Q EXIT"
-        }
+        ArcheologistView::Results => TEXT_KEYS,
 
-        ArcheologistView::SearchInput => "TYPE QUERY  •  ENTER SEARCH  •  ESC CANCEL",
-        ArcheologistView::Menu => "↑/↓ CHOOSE  •  ENTER OPEN  •  Q LEAVE",
+        ArcheologistView::SearchInput => "TYPE QUERY  •  ENTER SEARCH  •  ESC BACK  •  CTRL+C QUIT",
+        ArcheologistView::Menu => MENU_KEYS,
     };
     frame.render_widget(
         Paragraph::new(vec![
@@ -545,7 +624,6 @@ fn render_start_menu(frame: &mut ratatui::Frame<'_>, selection: usize, notice: &
             format!("       {description}"),
             Style::default().fg(GOLD),
         )));
-        lines.push(Line::from(""));
     }
     let menu = Block::default()
         .title(" DEPARTMENTS ")
@@ -556,10 +634,115 @@ fn render_start_menu(frame: &mut ratatui::Frame<'_>, selection: usize, notice: &
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(notice, Style::default().fg(GOLD))),
-            Line::from(Span::styled(
-                "↑/↓ CHOOSE  •  ENTER OPEN  •  Q LEAVE",
-                Style::default().fg(PETROL),
-            )),
+            Line::from(Span::styled(MENU_KEYS, Style::default().fg(PETROL))),
+        ]),
+        chunks[2],
+    );
+}
+
+fn render_ghosthunter(
+    frame: &mut ratatui::Frame<'_>,
+    view: GhosthunterView,
+    selection: usize,
+    preview_lines: &[String],
+    notice: &str,
+    scroll_offset: &mut u16,
+    max_scroll: &mut u16,
+    page_size: &mut u16,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(4),
+            Constraint::Length(2),
+        ])
+        .split(frame.area());
+    let header = Block::default()
+        .title(" GHOSTHUNTER  •  UPDATE CONTROL ")
+        .title_style(
+            Style::default()
+                .fg(PETROL)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(PETROL));
+    frame.render_widget(header, chunks[0]);
+    let (title, lines, footer): (&str, Vec<Line<'static>>, &str) = if view == GhosthunterView::Menu
+    {
+        (
+            " SELECT AN UPDATE ACTION ",
+            GHOSTHUNTER_MENU_ENTRIES
+                .iter()
+                .enumerate()
+                .flat_map(|(index, (label, description))| {
+                    let selected = index == selection;
+                    vec![
+                        Line::from(Span::styled(
+                            format!(
+                                " {} [{}] {label}",
+                                if selected { ">" } else { " " },
+                                index + 1
+                            ),
+                            Style::default()
+                                .fg(if selected { PETROL } else { PARCHMENT })
+                                .add_modifier(if selected {
+                                    ratatui::style::Modifier::BOLD
+                                } else {
+                                    ratatui::style::Modifier::empty()
+                                }),
+                        )),
+                        Line::from(Span::styled(
+                            format!("       {description}"),
+                            Style::default().fg(GOLD),
+                        )),
+                    ]
+                })
+                .collect(),
+            MENU_KEYS,
+        )
+    } else {
+        (
+            " PLANNED PACKAGE ACTIONS ",
+            preview_lines
+                .iter()
+                .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(PARCHMENT))))
+                .collect(),
+            TEXT_KEYS,
+        )
+    };
+    let panel = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(GOLD))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(PETROL));
+    let inner = panel.inner(chunks[1]);
+    frame.render_widget(panel, chunks[1]);
+    let lines = if lines.is_empty() {
+        vec![Line::from("No planned update actions.")]
+    } else {
+        lines
+    };
+    *max_scroll = wrapped_line_count(&lines, inner.width)
+        .saturating_sub(inner.height as usize)
+        .min(u16::MAX as usize) as u16;
+    *page_size = inner.height.saturating_sub(1).max(1);
+    if view == GhosthunterView::Menu {
+        *scroll_offset = 0;
+    } else {
+        *scroll_offset = (*scroll_offset).min(*max_scroll);
+    }
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .scroll((*scroll_offset, 0)),
+        inner,
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(notice, Style::default().fg(GOLD))),
+            Line::from(Span::styled(footer, Style::default().fg(PETROL))),
         ]),
         chunks[2],
     );
@@ -922,9 +1105,9 @@ fn render_advisor(
         inner,
     );
     let footer = if view == AdvisorView::Menu {
-        "↑/↓ CHOOSE  •  ENTER OPEN  •  Q LEAVE"
+        MENU_KEYS
     } else {
-        "↑/↓ READ  •  PGUP/PGDN PAGE  •  HOME/END JUMP  •  ESC RETURN"
+        TEXT_KEYS
     };
     frame.render_widget(
         Paragraph::new(vec![
@@ -1149,6 +1332,8 @@ fn render_librarian(
     frame: &mut ratatui::Frame<'_>,
     view: LibrarianView,
     menu_selection: usize,
+    target_id: &str,
+    target_snapshot: bool,
     snapshot_selection: usize,
     snapshots: &[LibrarianSnapshot],
     detail_lines: &[String],
@@ -1212,18 +1397,7 @@ fn render_librarian(
     } else {
         match view {
             LibrarianView::Menu => {
-                let entries = [
-                    (
-                        "BROWSE THE CATALOGUE",
-                        "Consult saved package records by system and date",
-                    ),
-                    (
-                        "ENTER A NEW VOLUME",
-                        "Preserve package versions and available archives",
-                    ),
-                    ("LEAVE THE READING ROOM", "Return to the command line"),
-                ];
-                let lines = entries
+                let lines = LIBRARIAN_MENU_ENTRIES
                     .iter()
                     .enumerate()
                     .flat_map(|(index, (label, description))| {
@@ -1248,12 +1422,31 @@ fn render_librarian(
                                 format!("       {description}"),
                                 Style::default().fg(GOLD),
                             )),
-                            Line::from(""),
                         ]
                     })
                     .collect();
-                (lines, false)
+                (lines, true)
             }
+            LibrarianView::TargetInput => (
+                vec![
+                    Line::from(Span::styled(
+                        if target_snapshot {
+                            "  ENTER TARGET ID FOR A NEW SNAPSHOT"
+                        } else {
+                            "  ENTER TARGET ID TO FILTER SNAPSHOTS"
+                        },
+                        Style::default()
+                            .fg(PETROL)
+                            .add_modifier(ratatui::style::Modifier::BOLD),
+                    )),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        format!("  Target ID: {target_id}_"),
+                        Style::default().fg(PARCHMENT),
+                    )),
+                ],
+                false,
+            ),
             LibrarianView::SnapshotList => {
                 let mut lines = vec![
                     Line::from(Span::styled(
@@ -1319,6 +1512,13 @@ fn render_librarian(
         *page_size = chunks[1].height.saturating_sub(1).max(1);
         if operation_running && follow_output {
             *scroll_offset = *max_scroll;
+        } else if view == LibrarianView::Menu {
+            let selected_row = menu_selection * 2;
+            if selected_row < usize::from(*scroll_offset) {
+                *scroll_offset = selected_row as u16;
+            } else if selected_row >= usize::from(*scroll_offset) + usize::from(*page_size) {
+                *scroll_offset = selected_row.saturating_sub(usize::from(*page_size) - 1) as u16;
+            }
         } else if view == LibrarianView::SnapshotList && !snapshots.is_empty() {
             let selected_row = 2 + snapshot_selection * 2;
             if selected_row < usize::from(*scroll_offset) {
@@ -1350,15 +1550,246 @@ fn render_librarian(
         "ATTENTION REQUIRED  •  ESC/Q RETURN"
     } else {
         match view {
-            LibrarianView::Menu => "↑/↓ CHOOSE  •  ENTER OPEN  •  Q LEAVE",
+            LibrarianView::Menu => MENU_KEYS,
+            LibrarianView::TargetInput => {
+                "TYPE TARGET ID  •  ENTER CONTINUE  •  ESC BACK  •  CTRL+C QUIT"
+            }
             LibrarianView::SnapshotList => {
-                "↑/↓ SELECT  •  ENTER EXAMINE  •  S ADD VOLUME  •  ESC BACK"
+                "↑/↓ J/K • 1-9 • HOME/END • ENTER • S SNAPSHOT • ESC BACK • Q EXIT"
             }
-            LibrarianView::SnapshotDetail => {
-                "↑/↓ READ  •  PGUP/PGDN PAGE  •  HOME/END JUMP  •  ESC RETURN TO CATALOGUE"
-            }
+            LibrarianView::SnapshotDetail => TEXT_KEYS,
         }
     };
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                if view == LibrarianView::Menu {
+                    LIBRARIAN_MENU_ENTRIES
+                        .get(menu_selection)
+                        .map(|entry| entry.1)
+                        .unwrap_or(notice)
+                } else {
+                    notice
+                },
+                Style::default().fg(GOLD),
+            )),
+            Line::from(Span::styled(footer, Style::default().fg(PETROL))),
+        ]),
+        chunks[2],
+    );
+}
+
+fn render_restorer(
+    frame: &mut ratatui::Frame<'_>,
+    view: RestorerView,
+    selection: usize,
+    snapshots: &[LibrarianSnapshot],
+    detail_lines: &[String],
+    result_lines: &[String],
+    notice: &str,
+    scroll_offset: &mut u16,
+    max_scroll: &mut u16,
+    page_size: &mut u16,
+) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Min(4),
+            Constraint::Length(3),
+        ])
+        .split(frame.area());
+    let title = Block::default()
+        .title(" RESTORER  •  THE RECOVERY CHAMBER ")
+        .title_style(
+            Style::default()
+                .fg(PETROL)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        )
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(PETROL));
+    let title_inner = title.inner(chunks[0]);
+    frame.render_widget(title, chunks[0]);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "Restore exact package versions from a Librarian snapshot.",
+                Style::default().fg(PARCHMENT),
+            )),
+            Line::from(Span::styled(
+                "A final confirmation is required before any package changes.",
+                Style::default().fg(GOLD),
+            )),
+        ]),
+        title_inner,
+    );
+
+    let (panel_title, lines, footer) = match view {
+        RestorerView::Menu => (
+            " RECOVERY OPTIONS ",
+            [
+                (
+                    "BROWSE SNAPSHOTS",
+                    "Inspect saved package states and choose one to restore.",
+                ),
+                ("LEAVE THE RECOVERY CHAMBER", "Return to the command line."),
+            ]
+            .iter()
+            .enumerate()
+            .flat_map(|(index, (label, description))| {
+                let selected = index == selection;
+                vec![
+                    Line::from(Span::styled(
+                        format!(
+                            " {} [{}] {label}",
+                            if selected { ">" } else { " " },
+                            index + 1
+                        ),
+                        Style::default()
+                            .fg(if selected { PETROL } else { PARCHMENT })
+                            .add_modifier(if selected {
+                                ratatui::style::Modifier::BOLD
+                            } else {
+                                ratatui::style::Modifier::empty()
+                            }),
+                    )),
+                    Line::from(Span::styled(
+                        format!("       {description}"),
+                        Style::default().fg(GOLD),
+                    )),
+                ]
+            })
+            .collect(),
+            MENU_KEYS,
+        ),
+        RestorerView::SnapshotList => {
+            let mut lines = vec![
+                Line::from(Span::styled(
+                    "  SELECT A SNAPSHOT TO INSPECT",
+                    Style::default()
+                        .fg(PETROL)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                )),
+                Line::from(""),
+            ];
+            if snapshots.is_empty() {
+                lines.push(Line::from(
+                    "  NO SNAPSHOTS FOUND. CREATE ONE WITH THE LIBRARIAN.",
+                ));
+            }
+            for (index, snapshot) in snapshots.iter().enumerate() {
+                let selected = index == selection;
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "{} {}  {}  {} packages  {}",
+                        if selected { ">" } else { " " },
+                        snapshot.target.name,
+                        snapshot.created,
+                        snapshot.package_count,
+                        if snapshot.restorable {
+                            "RESTORABLE"
+                        } else {
+                            "MANIFEST ONLY"
+                        }
+                    ),
+                    Style::default()
+                        .fg(if selected { PETROL } else { PARCHMENT })
+                        .add_modifier(if selected {
+                            ratatui::style::Modifier::BOLD
+                        } else {
+                            ratatui::style::Modifier::empty()
+                        }),
+                )));
+                lines.push(Line::from(Span::styled(
+                    format!("    ID: {}", snapshot.id),
+                    Style::default().fg(GOLD),
+                )));
+            }
+            (
+                " SAVED SNAPSHOTS ",
+                lines,
+                "↑/↓ J/K • 1-9 • HOME/END • ENTER • R RESTORE • ESC BACK • Q EXIT",
+            )
+        }
+        RestorerView::SnapshotDetail => (
+            " SNAPSHOT RECORD ",
+            detail_lines
+                .iter()
+                .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(PARCHMENT))))
+                .collect(),
+            "R RESTORE  •  ↑/↓ J/K READ  •  PGUP/PGDN  •  ESC BACK  •  Q EXIT",
+        ),
+        RestorerView::ConfirmRestore => {
+            let snapshot = snapshots.get(selection);
+            let mut lines = vec![
+                Line::from(Span::styled(
+                    "  CONFIRM PACKAGE RESTORATION",
+                    Style::default()
+                        .fg(ERROR_RED)
+                        .add_modifier(ratatui::style::Modifier::BOLD),
+                )),
+                Line::from(""),
+            ];
+            if let Some(snapshot) = snapshot {
+                lines.extend([
+                    Line::from(format!("  Target: {}", snapshot.target.name)),
+                    Line::from(format!("  Created: {}", snapshot.created)),
+                    Line::from(format!(
+                        "  Packages in snapshot: {}",
+                        snapshot.package_count
+                    )),
+                    Line::from(format!("  Snapshot ID: {}", snapshot.id)),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Pacmonster will restore cached versions; newer extra packages remain.",
+                        Style::default().fg(GOLD),
+                    )),
+                ]);
+            }
+            (
+                " FINAL CHECK ",
+                lines,
+                "Y CONFIRM RESTORE  •  N/ESC CANCEL  •  Q EXIT",
+            )
+        }
+        RestorerView::Result => (
+            " RESTORATION REPORT ",
+            result_lines
+                .iter()
+                .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(PARCHMENT))))
+                .collect(),
+            TEXT_KEYS,
+        ),
+    };
+    let panel = Block::default()
+        .title(panel_title)
+        .title_style(Style::default().fg(GOLD))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(PETROL));
+    let inner = panel.inner(chunks[1]);
+    frame.render_widget(panel, chunks[1]);
+    *max_scroll = wrapped_line_count(&lines, inner.width)
+        .saturating_sub(inner.height as usize)
+        .min(u16::MAX as usize) as u16;
+    *page_size = inner.height.saturating_sub(1).max(1);
+    if view == RestorerView::SnapshotList && !snapshots.is_empty() {
+        let selected_row = 2 + selection * 2;
+        if selected_row < usize::from(*scroll_offset) {
+            *scroll_offset = selected_row as u16;
+        } else if selected_row >= usize::from(*scroll_offset) + usize::from(*page_size) {
+            *scroll_offset = selected_row.saturating_sub(usize::from(*page_size) - 1) as u16;
+        }
+    } else if view == RestorerView::Menu || view == RestorerView::ConfirmRestore {
+        *scroll_offset = 0;
+    }
+    *scroll_offset = (*scroll_offset).min(*max_scroll);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: true })
+            .scroll((*scroll_offset, 0)),
+        inner,
+    );
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(notice, Style::default().fg(GOLD))),
@@ -1366,6 +1797,201 @@ fn render_librarian(
         ]),
         chunks[2],
     );
+}
+
+fn format_command_output(stdout: &[String], stderr: &[String]) -> Vec<String> {
+    let stdout_text = stdout.join("\n");
+    let mut lines = match serde_json::from_str::<serde_json::Value>(&stdout_text) {
+        Ok(value) => format_json_value(&value),
+        Err(error) if matches!(stdout_text.trim_start().chars().next(), Some('{' | '[')) => {
+            vec![
+                "Structured command output could not be interpreted.".to_string(),
+                format!("Details: {error}"),
+                "Raw structured data was hidden.".to_string(),
+            ]
+        }
+        Err(_) => stdout.to_vec(),
+    };
+    if !stderr.is_empty() {
+        let stderr_text = stderr.join("\n");
+        match serde_json::from_str::<serde_json::Value>(&stderr_text) {
+            Ok(value) => {
+                lines.push("Additional diagnostic details:".to_string());
+                lines.extend(format_json_value(&value));
+            }
+            Err(error) if matches!(stderr_text.trim_start().chars().next(), Some('{' | '[')) => {
+                lines.push("Structured diagnostic details could not be interpreted.".to_string());
+                lines.push(format!("Details: {error}"));
+                lines.push("Raw structured data was hidden.".to_string());
+            }
+            Err(_) => lines.extend(stderr.iter().map(|line| format!("stderr: {line}"))),
+        }
+    }
+    lines
+}
+
+fn humanize_json_key(key: &str) -> String {
+    key.split('_')
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn format_json_scalar(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "Not available".to_string(),
+        serde_json::Value::Bool(true) => "Yes".to_string(),
+        serde_json::Value::Bool(false) => "No".to_string(),
+        serde_json::Value::String(value)
+            if matches!(value.trim_start().chars().next(), Some('{' | '[')) =>
+        {
+            match serde_json::from_str::<serde_json::Value>(value) {
+                Ok(nested) => format_json_value(&nested).join(" · "),
+                Err(_) => value.clone(),
+            }
+        }
+        serde_json::Value::String(value) => value.clone(),
+        _ => value.to_string(),
+    }
+}
+
+fn command_emits_structured_output(command: Option<&str>) -> bool {
+    matches!(
+        command,
+        Some(
+            "ghosthunter-preview"
+                | "doctor-diagnostics"
+                | "doctor-installation"
+                | "doctor-utility"
+                | "archeologist-all"
+                | "archeologist-issues"
+                | "archeologist-search"
+                | "librarian-list"
+                | "librarian-snapshot"
+                | "librarian-show"
+                | "librarian-utility"
+                | "restorer-list"
+                | "restorer-show"
+                | "restorer-restore"
+        )
+    )
+}
+
+fn append_json_value(lines: &mut Vec<String>, value: &serde_json::Value, indent: usize) {
+    let padding = " ".repeat(indent);
+    match value {
+        serde_json::Value::Object(fields) => {
+            for (key, field) in fields {
+                let label = humanize_json_key(key);
+                if let serde_json::Value::Object(items) = field {
+                    if key == "packages" || key == "archives" {
+                        lines.push(format!(
+                            "{padding}{} ({}):",
+                            if key == "packages" {
+                                "Packages"
+                            } else {
+                                "Package archives"
+                            },
+                            items.len()
+                        ));
+                        for (name, item) in items {
+                            match item {
+                                serde_json::Value::Object(_) => {
+                                    lines.push(format!("{padding}  {name}"));
+                                    append_json_value(lines, item, indent + 4);
+                                }
+                                _ => lines.push(format!(
+                                    "{padding}  {name} — {}",
+                                    format_json_scalar(item)
+                                )),
+                            }
+                        }
+                        continue;
+                    }
+                }
+                match field {
+                    serde_json::Value::Object(nested) if nested.is_empty() => {
+                        lines.push(format!("{padding}{label}: None"));
+                    }
+                    serde_json::Value::Object(_) => {
+                        lines.push(format!("{padding}{label}"));
+                        append_json_value(lines, field, indent + 2);
+                    }
+                    serde_json::Value::Array(items) if items.is_empty() => {
+                        lines.push(format!("{padding}{label}: None"));
+                    }
+                    serde_json::Value::Array(items) => {
+                        lines.push(format!("{padding}{label} ({}):", items.len()));
+                        append_json_value(lines, field, indent + 2);
+                    }
+                    serde_json::Value::String(text)
+                        if matches!(text.trim_start().chars().next(), Some('{' | '[')) =>
+                    {
+                        match serde_json::from_str::<serde_json::Value>(text) {
+                            Ok(nested) => {
+                                lines.push(format!("{padding}{label}:"));
+                                append_json_value(lines, &nested, indent + 2);
+                            }
+                            Err(_) => lines
+                                .push(format!("{padding}{label}: {}", format_json_scalar(field))),
+                        }
+                    }
+                    serde_json::Value::String(text) if text.contains('\n') => {
+                        lines.push(format!("{padding}{label}:"));
+                        lines.extend(text.lines().map(|line| format!("{padding}  {line}")));
+                    }
+                    _ => lines.push(format!("{padding}{label}: {}", format_json_scalar(field))),
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    lines.push(String::new());
+                }
+                if item.is_object() {
+                    lines.push(format!("{padding}Record {}", index + 1));
+                    append_json_value(lines, item, indent + 2);
+                } else {
+                    lines.push(format!("{padding}• {}", format_json_scalar(item)));
+                }
+            }
+        }
+        _ => lines.push(format!("{padding}{}", format_json_scalar(value))),
+    }
+}
+
+fn format_json_value(value: &serde_json::Value) -> Vec<String> {
+    let mut lines = Vec::new();
+    append_json_value(&mut lines, value, 0);
+    if lines.is_empty() {
+        lines.push("No records found.".to_string());
+    }
+    lines
+}
+
+fn format_log_message(message: &str) -> String {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(message) else {
+        return message.to_string();
+    };
+    let mut lines = Vec::new();
+    append_json_value(&mut lines, &value, 0);
+    lines
+        .into_iter()
+        .filter(|line| !line.is_empty())
+        .map(|line| line.trim().to_string())
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+fn snapshot_is_restorable(snapshot: &LibrarianSnapshot) -> bool {
+    snapshot.restorable
 }
 
 fn launch_librarian_command(
@@ -1395,32 +2021,10 @@ fn launch_start_selection(
                 .status()?;
             return Ok(status.code().unwrap_or(1));
         }
-
-        let running_as_root = authorize_root("restaurator")?;
-        let executable = PathBuf::from("/usr/local/bin/pacmonster");
-        let executable = if executable.is_file() {
-            executable
-        } else {
-            find_executable("pacmonster")
-                .filter(|path| {
-                    !path.starts_with(env::var_os("HOME").map(PathBuf::from).unwrap_or_default())
-                })
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::NotFound,
-                        "Pacmonster CLI not found; run `./install.sh` first",
-                    )
-                })?
-        };
-        let mut command = if running_as_root {
-            Command::new(executable)
-        } else {
-            let mut sudo = Command::new("sudo");
-            sudo.arg("-n").arg(executable);
-            sudo
-        };
-        let status = command.args(["restaurator", "list"]).status()?;
-        Ok(status.code().unwrap_or(1))
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unknown main-menu selection",
+        ))
     })();
 
     let restore_result = terminal::enable_raw_mode().and_then(|()| {
@@ -1472,6 +2076,10 @@ fn main() -> io::Result<()> {
         Some("doctor")
     } else if std::env::args().any(|argument| argument == "--run-updates") {
         Some("updates")
+    } else if std::env::args().any(|argument| argument == "--run-updates-confirm") {
+        Some("updates-confirm")
+    } else if std::env::args().any(|argument| argument == "--run-ghosthunter") {
+        Some("ghosthunter")
     } else if std::env::args().any(|argument| argument == "--run-librarian") {
         Some("librarian")
     } else if std::env::args().any(|argument| argument == "--run-archeologist") {
@@ -1480,6 +2088,8 @@ fn main() -> io::Result<()> {
         Some("start")
     } else if std::env::args().any(|argument| argument == "--run-advisor") {
         Some("advisor")
+    } else if std::env::args().any(|argument| argument == "--run-restorer") {
+        Some("restorer")
     } else {
         None
     };
@@ -1490,6 +2100,8 @@ fn main() -> io::Result<()> {
     let mut command_stderr = Vec::new();
     let mut doctor_checks: Vec<DoctorCheck> = Vec::new();
     let mut doctor_show_results = false;
+    let mut doctor_command_output = false;
+    let mut doctor_operation_lines: Vec<String> = Vec::new();
     let mut doctor_menu_selection = 0usize;
     let mut doctor_notice = "THE INFIRMARY IS READY.".to_string();
     let mut archeologist_view = ArcheologistView::Menu;
@@ -1499,6 +2111,10 @@ fn main() -> io::Result<()> {
     let mut archeologist_notice = "THE RECORDS ROOM IS READY.".to_string();
     let mut start_menu_selection = 0usize;
     let mut start_menu_notice = "WELCOME TO PACMONSTER.".to_string();
+    let mut ghosthunter_view = GhosthunterView::Menu;
+    let mut ghosthunter_selection = 0usize;
+    let mut ghosthunter_preview_lines = Vec::new();
+    let mut ghosthunter_notice = "CHOOSE AN UPDATE ACTION.".to_string();
     let mut advisor_view = AdvisorView::Menu;
     let mut advisor_selection = 0usize;
     let mut advisor_help_lines: Vec<String> = Vec::new();
@@ -1506,10 +2122,18 @@ fn main() -> io::Result<()> {
     let mut advisor_notice = "THE REFERENCE ROOM IS READY.".to_string();
     let mut librarian_view = LibrarianView::Menu;
     let mut librarian_menu_selection = 0usize;
+    let mut librarian_target_id = String::new();
+    let mut librarian_target_snapshot = false;
     let mut librarian_snapshot_selection = 0usize;
     let mut librarian_snapshots: Vec<LibrarianSnapshot> = Vec::new();
     let mut librarian_detail_lines: Vec<String> = Vec::new();
     let mut librarian_notice = "THE CATALOGUE IS READY.".to_string();
+    let mut restorer_view = RestorerView::Menu;
+    let mut restorer_selection = 0usize;
+    let mut restorer_snapshots: Vec<LibrarianSnapshot> = Vec::new();
+    let mut restorer_detail_lines: Vec<String> = Vec::new();
+    let mut restorer_result_lines: Vec<String> = Vec::new();
+    let mut restorer_notice = "THE RECOVERY CHAMBER IS READY.".to_string();
     let mut active_command: Option<String> = None;
     let mut child = None;
     let mut child_finished = false;
@@ -1524,15 +2148,17 @@ fn main() -> io::Result<()> {
     let mut exit_code = 0;
     let animation_started = Instant::now();
 
-    if let Some(mode) = mode.filter(|mode| *mode == "updates") {
+    if let Some(mode) = mode.filter(|mode| *mode == "updates" || *mode == "updates-confirm") {
         let (arguments, action): (&[&str], &str) = match mode {
             "updates" => (&["update", "--yes"], "updates"),
+            "updates-confirm" => (&["update"], "updates-confirm"),
             _ => unreachable!(),
         };
         match start_command(&output_sender, arguments, action) {
             Ok(command_child) => {
                 let description = match mode {
                     "updates" => "Starting all planned updates (--yes)...",
+                    "updates-confirm" => "Starting updates with confirmation...",
                     _ => unreachable!(),
                 };
                 output.push_back(description.to_string());
@@ -1569,13 +2195,12 @@ fn main() -> io::Result<()> {
                 } else if mode != Some("updates") {
                     command_stderr.push(line.clone());
                 }
-                if mode == Some("librarian") || mode == Some("archeologist") {
-                    output.push_back(line);
-                    if output.len() > 300 {
-                        output.pop_front();
-                    }
-                } else {
-                    output.push_back(line);
+                if !(is_stdout && command_emits_structured_output(active_command.as_deref())) {
+                    output.push_back(if is_stdout {
+                        format_log_message(&line)
+                    } else {
+                        line
+                    });
                     if output.len() > 300 {
                         output.pop_front();
                     }
@@ -1593,7 +2218,11 @@ fn main() -> io::Result<()> {
             }
             if child_finished && stdout_finished && !completion_prompt {
                 if mode == Some("librarian") && exit_code != 0 {
-                    let detail = command_stderr.join(" ").trim().to_string();
+                    let mut detail = command_stderr.join(" ").trim().to_string();
+                    if detail.is_empty() {
+                        detail = command_stdout.join(" ").trim().to_string();
+                    }
+                    detail = format_log_message(&detail);
                     librarian_notice = if exit_code == 130 && !detail.is_empty() {
                         format!("OPERATION CANCELLED: {detail}")
                     } else if exit_code == 130 {
@@ -1607,22 +2236,50 @@ fn main() -> io::Result<()> {
                         format!("LIBRARY ERROR: {detail}")
                     };
                 }
+                if mode == Some("restorer") && exit_code != 0 {
+                    restorer_result_lines = format_command_output(&command_stdout, &command_stderr);
+                    restorer_view = RestorerView::Result;
+                    let mut detail = command_stderr.join(" ").trim().to_string();
+                    if detail.is_empty() {
+                        detail = command_stdout.join(" ").trim().to_string();
+                    }
+                    detail = format_log_message(&detail);
+                    if !detail.is_empty() {
+                        restorer_notice = format!("RESTORATION ERROR: {detail}");
+                    } else {
+                        restorer_notice =
+                            format!("RESTORATION COMMAND EXITED WITH STATUS {exit_code}.");
+                    }
+                }
                 match active_command.as_deref() {
-                    Some("advisor-help") => {
-                        match serde_json::from_str::<Vec<String>>(&command_stdout.join("\n")) {
-                            Ok(lines) => {
-                                advisor_help_lines = lines;
-                                advisor_view = AdvisorView::Help;
-                                advisor_notice = "CLI HELP LOADED.".to_string();
-                                scroll_offset = 0;
-                            }
-                            Err(error) => {
-                                advisor_view = AdvisorView::Help;
-                                advisor_notice = format!("CLI HELP COULD NOT BE READ: {error}");
-                            }
+                    Some("ghosthunter-preview") => {
+                        ghosthunter_preview_lines =
+                            format_command_output(&command_stdout, &command_stderr);
+                        if ghosthunter_preview_lines.is_empty() {
+                            ghosthunter_preview_lines
+                                .push("No update actions were returned.".into());
                         }
+                        ghosthunter_view = GhosthunterView::Preview;
+                        ghosthunter_notice = if exit_code == 0 {
+                            "UPDATE PREVIEW READY. NO PACKAGES WERE CHANGED.".into()
+                        } else {
+                            format!("PREVIEW COMMAND EXITED WITH STATUS {exit_code}.")
+                        };
+                        scroll_offset = 0;
+                        follow_output = false;
+                    }
+                    Some("advisor-help") => {
+                        advisor_help_lines = command_stdout.clone();
+                        advisor_view = AdvisorView::Help;
+                        advisor_notice = if advisor_help_lines.is_empty() {
+                            "CLI HELP RETURNED NO CONTENT.".to_string()
+                        } else {
+                            "CLI HELP LOADED.".to_string()
+                        };
+                        scroll_offset = 0;
                     }
                     Some("doctor-diagnostics" | "doctor-installation") => {
+                        doctor_command_output = false;
                         match serde_json::from_str::<Vec<DoctorCheck>>(&command_stdout.join("\n")) {
                             Ok(checks) => {
                                 doctor_checks = checks;
@@ -1638,11 +2295,27 @@ fn main() -> io::Result<()> {
                             }
                             Err(error) => {
                                 doctor_show_results = true;
+                                doctor_command_output = true;
+                                doctor_operation_lines =
+                                    format_command_output(&command_stdout, &command_stderr);
                                 doctor_notice =
                                     format!("DIAGNOSTIC RESULTS COULD NOT BE READ: {error}");
-                                output.push_back(command_stderr.join(" "));
+                                follow_output = false;
                             }
                         }
+                    }
+                    Some("doctor-utility") => {
+                        doctor_operation_lines =
+                            format_command_output(&command_stdout, &command_stderr);
+                        doctor_command_output = true;
+                        doctor_show_results = true;
+                        doctor_notice = if exit_code == 0 {
+                            "WITCHDOCTOR COMMAND COMPLETE.".to_string()
+                        } else {
+                            format!("COMMAND EXITED WITH STATUS {exit_code}.")
+                        };
+                        scroll_offset = 0;
+                        follow_output = false;
                     }
                     Some("archeologist-all" | "archeologist-issues" | "archeologist-search") => {
                         match serde_json::from_str::<Vec<ArcheologistRecord>>(
@@ -1695,13 +2368,7 @@ fn main() -> io::Result<()> {
                         match serde_json::from_str::<serde_json::Value>(&command_stdout.join("\n"))
                         {
                             Ok(detail) => {
-                                librarian_detail_lines = serde_json::to_string_pretty(&detail)
-                                    .unwrap_or_else(|error| {
-                                        format!("Could not format details: {error}")
-                                    })
-                                    .lines()
-                                    .map(str::to_owned)
-                                    .collect();
+                                librarian_detail_lines = format_json_value(&detail);
                                 librarian_view = LibrarianView::SnapshotDetail;
                                 librarian_notice =
                                     "CATALOGUE RECORD // PRESS ESC TO RETURN".to_string();
@@ -1715,9 +2382,86 @@ fn main() -> io::Result<()> {
                             }
                         }
                     }
+                    Some("librarian-utility") => {
+                        librarian_detail_lines =
+                            format_command_output(&command_stdout, &command_stderr);
+                        librarian_view = LibrarianView::SnapshotDetail;
+                        librarian_notice = if exit_code == 0 {
+                            "LIBRARY RECORD UPDATED.".to_string()
+                        } else {
+                            format!("LIBRARIAN COMMAND EXITED WITH STATUS {exit_code}.")
+                        };
+                        scroll_offset = 0;
+                        follow_output = false;
+                    }
+                    Some("restorer-list") if exit_code == 0 => {
+                        match serde_json::from_str::<Vec<LibrarianSnapshot>>(
+                            &command_stdout.join("\n"),
+                        ) {
+                            Ok(snapshots) => {
+                                restorer_snapshots = snapshots;
+                                restorer_selection = 0;
+                                restorer_view = RestorerView::SnapshotList;
+                                restorer_notice =
+                                    format!("{} SNAPSHOT(S) AVAILABLE.", restorer_snapshots.len());
+                                scroll_offset = 0;
+                            }
+                            Err(error) => {
+                                restorer_result_lines =
+                                    vec![format!("Snapshot catalogue could not be read: {error}")];
+                                restorer_result_lines.extend(format_command_output(
+                                    &command_stdout,
+                                    &command_stderr,
+                                ));
+                                restorer_view = RestorerView::Result;
+                            }
+                        }
+                    }
+                    Some("restorer-show") if exit_code == 0 => {
+                        restorer_detail_lines =
+                            format_command_output(&command_stdout, &command_stderr);
+                        restorer_view = RestorerView::SnapshotDetail;
+                        restorer_notice = "REVIEW THE RECORD BEFORE RESTORING.".to_string();
+                        scroll_offset = 0;
+                    }
+                    Some("restorer-restore") => {
+                        let restore_data =
+                            serde_json::from_str::<serde_json::Value>(&command_stdout.join("\n"))
+                                .ok();
+                        let restore_status = restore_data
+                            .as_ref()
+                            .and_then(|result| result.get("status"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned);
+                        let output =
+                            restore_data
+                                .as_ref()
+                                .map(format_json_value)
+                                .unwrap_or_else(|| {
+                                    format_command_output(&command_stdout, &command_stderr)
+                                });
+                        restorer_result_lines = output;
+                        restorer_view = RestorerView::Result;
+                        restorer_notice = match restore_status.as_deref() {
+                            Some("success") => "RESTORATION COMPLETE.".to_string(),
+                            Some("unchanged") => "TARGET ALREADY MATCHES THE SNAPSHOT.".to_string(),
+                            Some("missing") => "REQUIRED PACKAGE ARCHIVES ARE MISSING.".to_string(),
+                            Some("locked") => "ANOTHER UPDATE OR RESTORE IS ACTIVE.".to_string(),
+                            Some("failed") => "PACKAGE RESTORATION FAILED.".to_string(),
+                            _ if exit_code == 0 => "RESTORE COMMAND FINISHED.".to_string(),
+                            _ => restorer_notice.clone(),
+                        };
+                        scroll_offset = 0;
+                    }
                     _ => {}
                 }
-                if mode == Some("updates") {
+                if mode == Some("updates")
+                    || mode == Some("updates-confirm")
+                    || matches!(
+                        active_command.as_deref(),
+                        Some("updates" | "updates-confirm")
+                    )
+                {
                     completion_status =
                         format!("Updates finished (exit code {exit_code}). Exit TUI? [y/N]");
                     completion_prompt = true;
@@ -1737,6 +2481,22 @@ fn main() -> io::Result<()> {
                     render_start_menu(frame, start_menu_selection, &start_menu_notice);
                     return;
                 }
+                if mode == Some("ghosthunter")
+                    && ghosthunter_view != GhosthunterView::Dashboard
+                    && !completion_prompt
+                {
+                    render_ghosthunter(
+                        frame,
+                        ghosthunter_view,
+                        ghosthunter_selection,
+                        &ghosthunter_preview_lines,
+                        &ghosthunter_notice,
+                        &mut scroll_offset,
+                        &mut max_scroll,
+                        &mut page_size,
+                    );
+                    return;
+                }
                 if mode == Some("advisor") {
                     render_advisor(
                         frame,
@@ -1751,11 +2511,28 @@ fn main() -> io::Result<()> {
                     );
                     return;
                 }
+                if mode == Some("restorer") {
+                    render_restorer(
+                        frame,
+                        restorer_view,
+                        restorer_selection,
+                        &restorer_snapshots,
+                        &restorer_detail_lines,
+                        &restorer_result_lines,
+                        &restorer_notice,
+                        &mut scroll_offset,
+                        &mut max_scroll,
+                        &mut page_size,
+                    );
+                    return;
+                }
                 if mode == Some("librarian") {
                     render_librarian(
                         frame,
                         librarian_view,
                         librarian_menu_selection,
+                        &librarian_target_id,
+                        librarian_target_snapshot,
                         librarian_snapshot_selection,
                         &librarian_snapshots,
                         &librarian_detail_lines,
@@ -1774,6 +2551,8 @@ fn main() -> io::Result<()> {
                         frame,
                         &doctor_checks,
                         doctor_show_results,
+                        doctor_command_output,
+                        &doctor_operation_lines,
                         doctor_menu_selection,
                         &doctor_notice,
                         &mut scroll_offset,
@@ -1849,7 +2628,11 @@ fn main() -> io::Result<()> {
                     ]),
                 ];
                 let pool_block = Block::default()
-                    .title(" THE GHOST POOL ")
+                    .title(if mode == Some("ghosthunter") {
+                        " GHOSTHUNTER  •  THE GHOST POOL "
+                    } else {
+                        " THE GHOST POOL "
+                    })
                     .title_style(Style::default().fg(GOLD))
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(PETROL));
@@ -1936,6 +2719,8 @@ fn main() -> io::Result<()> {
                                 start_menu_selection =
                                     (start_menu_selection + 1).min(START_MENU_ENTRIES.len() - 1);
                             }
+                            KeyCode::Home => start_menu_selection = 0,
+                            KeyCode::End => start_menu_selection = START_MENU_ENTRIES.len() - 1,
                             KeyCode::Char(digit @ '1'..='6') => {
                                 start_menu_selection =
                                     digit.to_digit(10).unwrap_or(1).saturating_sub(1) as usize;
@@ -1969,6 +2754,119 @@ fn main() -> io::Result<()> {
                         continue;
                     }
 
+                    if mode == Some("ghosthunter")
+                        && ghosthunter_view != GhosthunterView::Dashboard
+                        && child.is_none()
+                        && !completion_prompt
+                    {
+                        match ghosthunter_view {
+                            GhosthunterView::Menu => {
+                                let mut command_to_start: Option<(String, Vec<String>, String)> =
+                                    None;
+                                match key.code {
+                                    KeyCode::Up | KeyCode::Char('k') => {
+                                        ghosthunter_selection =
+                                            ghosthunter_selection.saturating_sub(1);
+                                    }
+                                    KeyCode::Down | KeyCode::Char('j') => {
+                                        ghosthunter_selection = (ghosthunter_selection + 1).min(2);
+                                    }
+                                    KeyCode::Home => ghosthunter_selection = 0,
+                                    KeyCode::End => ghosthunter_selection = 2,
+                                    KeyCode::Char('1') => ghosthunter_selection = 0,
+                                    KeyCode::Char('2') => ghosthunter_selection = 1,
+                                    KeyCode::Char('3') => ghosthunter_selection = 2,
+                                    KeyCode::Enter => match ghosthunter_selection {
+                                        0 => {
+                                            ghosthunter_view = GhosthunterView::Dashboard;
+                                            command_to_start = Some((
+                                                "updates".into(),
+                                                vec!["update".into(), "--yes".into()],
+                                                "RUNNING PLANNED UPDATES...".into(),
+                                            ));
+                                        }
+                                        1 => {
+                                            ghosthunter_view = GhosthunterView::Dashboard;
+                                            command_to_start = Some((
+                                                "updates-confirm".into(),
+                                                vec!["update".into()],
+                                                "STARTING UPDATES WITH CONFIRMATION...".into(),
+                                            ));
+                                        }
+                                        2 => {
+                                            command_to_start = Some((
+                                                "ghosthunter-preview".into(),
+                                                vec!["dry-run".into(), "--json".into()],
+                                                "PREPARING UPDATE PREVIEW...".into(),
+                                            ));
+                                        }
+                                        _ => unreachable!(),
+                                    },
+                                    KeyCode::Char('q') | KeyCode::Esc => break,
+                                    _ => {}
+                                }
+                                if let Some((action, arguments, notice)) = command_to_start {
+                                    command_stdout.clear();
+                                    command_stderr.clear();
+                                    output.clear();
+                                    ghosthunter_notice = notice;
+                                    active_command = Some(action);
+                                    child_finished = false;
+                                    stdout_finished = false;
+                                    let borrowed_arguments: Vec<&str> =
+                                        arguments.iter().map(String::as_str).collect();
+                                    match launch_librarian_command(
+                                        &mut terminal,
+                                        &output_sender,
+                                        &borrowed_arguments,
+                                        "ghosthunter",
+                                    ) {
+                                        Ok(command_child) => child = Some(command_child),
+                                        Err(error) => {
+                                            active_command = None;
+                                            ghosthunter_view = GhosthunterView::Menu;
+                                            ghosthunter_notice =
+                                                format!("UPDATE ACTION COULD NOT START: {error}");
+                                        }
+                                    }
+                                }
+                                continue;
+                            }
+                            GhosthunterView::Preview => match key.code {
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    scroll_offset = move_scroll(scroll_offset, max_scroll, -1);
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    scroll_offset = move_scroll(scroll_offset, max_scroll, 1);
+                                }
+                                KeyCode::PageUp => {
+                                    scroll_offset = move_scroll(
+                                        scroll_offset,
+                                        max_scroll,
+                                        -i32::from(page_size),
+                                    );
+                                }
+                                KeyCode::PageDown => {
+                                    scroll_offset = move_scroll(
+                                        scroll_offset,
+                                        max_scroll,
+                                        i32::from(page_size),
+                                    );
+                                }
+                                KeyCode::Home => scroll_offset = 0,
+                                KeyCode::End => scroll_offset = max_scroll,
+                                KeyCode::Esc | KeyCode::Backspace => {
+                                    ghosthunter_view = GhosthunterView::Menu;
+                                    ghosthunter_notice = "CHOOSE AN UPDATE ACTION.".into();
+                                }
+                                KeyCode::Char('q') => break,
+                                _ => {}
+                            },
+                            GhosthunterView::Dashboard => {}
+                        }
+                        continue;
+                    }
+
                     if mode == Some("advisor") {
                         if child.is_some() {
                             if key.code == KeyCode::Char('q')
@@ -1989,6 +2887,8 @@ fn main() -> io::Result<()> {
                                 KeyCode::Down | KeyCode::Char('j') => {
                                     advisor_selection = (advisor_selection + 1).min(4);
                                 }
+                                KeyCode::Home => advisor_selection = 0,
+                                KeyCode::End => advisor_selection = 4,
                                 KeyCode::Char('1') => advisor_selection = 0,
                                 KeyCode::Char('2') => advisor_selection = 1,
                                 KeyCode::Char('3') => advisor_selection = 2,
@@ -1999,10 +2899,8 @@ fn main() -> io::Result<()> {
                                     0 => {
                                         advisor_notice =
                                             "CONSULTING PACMONSTER HELP...".to_string();
-                                        command_to_start = Some((
-                                            "advisor-help".to_string(),
-                                            vec!["help".into(), "--json".into()],
-                                        ));
+                                        command_to_start =
+                                            Some(("advisor-help".to_string(), vec!["help".into()]));
                                     }
                                     1 => match project_readme() {
                                         Ok(markdown) => {
@@ -2096,6 +2994,221 @@ fn main() -> io::Result<()> {
                         continue;
                     }
 
+                    if mode == Some("restorer") && child.is_none() {
+                        let mut command_to_start: Option<(String, Vec<String>)> = None;
+                        match restorer_view {
+                            RestorerView::Menu => match key.code {
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    restorer_selection = restorer_selection.saturating_sub(1);
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    restorer_selection = (restorer_selection + 1).min(1);
+                                }
+                                KeyCode::Home => restorer_selection = 0,
+                                KeyCode::End => restorer_selection = 1,
+                                KeyCode::Char('1') => restorer_selection = 0,
+                                KeyCode::Char('2') => restorer_selection = 1,
+                                KeyCode::Enter if restorer_selection == 0 => {
+                                    command_to_start = Some((
+                                        "restorer-list".to_string(),
+                                        vec!["restorer".into(), "list".into(), "--json".into()],
+                                    ));
+                                    restorer_notice = "OPENING THE SNAPSHOT CATALOGUE...".into();
+                                }
+                                KeyCode::Enter | KeyCode::Char('q') | KeyCode::Esc => break,
+                                _ => {}
+                            },
+                            RestorerView::SnapshotList => match key.code {
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    restorer_selection = restorer_selection.saturating_sub(1);
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    if !restorer_snapshots.is_empty() {
+                                        restorer_selection = (restorer_selection + 1)
+                                            .min(restorer_snapshots.len() - 1);
+                                    }
+                                }
+                                KeyCode::Home => restorer_selection = 0,
+                                KeyCode::End if !restorer_snapshots.is_empty() => {
+                                    restorer_selection = restorer_snapshots.len() - 1;
+                                }
+                                KeyCode::Char(digit @ '1'..='9')
+                                    if (digit.to_digit(10).unwrap_or(1) as usize)
+                                        <= restorer_snapshots.len() =>
+                                {
+                                    restorer_selection =
+                                        digit.to_digit(10).unwrap_or(1) as usize - 1;
+                                }
+                                KeyCode::Enter if !restorer_snapshots.is_empty() => {
+                                    let snapshot = &restorer_snapshots[restorer_selection];
+                                    command_to_start = Some((
+                                        "restorer-show".to_string(),
+                                        vec![
+                                            "librarian".into(),
+                                            "show".into(),
+                                            snapshot.id.clone(),
+                                            "--json".into(),
+                                        ],
+                                    ));
+                                    restorer_notice = "READING SNAPSHOT DETAILS...".into();
+                                }
+                                KeyCode::Char('r') if !restorer_snapshots.is_empty() => {
+                                    if snapshot_is_restorable(
+                                        &restorer_snapshots[restorer_selection],
+                                    ) {
+                                        restorer_view = RestorerView::ConfirmRestore;
+                                        restorer_notice =
+                                            "RESTORE USES CACHED PACKAGE ARCHIVES.".into();
+                                        scroll_offset = 0;
+                                    } else {
+                                        restorer_notice =
+                                            "THIS MANIFEST HAS NO SAVED PACKAGE ARCHIVES.".into();
+                                    }
+                                }
+                                KeyCode::Esc | KeyCode::Backspace => {
+                                    restorer_view = RestorerView::Menu;
+                                    restorer_selection = 0;
+                                    scroll_offset = 0;
+                                }
+                                KeyCode::Char('q') => break,
+                                _ => {}
+                            },
+                            RestorerView::SnapshotDetail => match key.code {
+                                KeyCode::Char('r') => {
+                                    if restorer_snapshots
+                                        .get(restorer_selection)
+                                        .is_some_and(snapshot_is_restorable)
+                                    {
+                                        restorer_view = RestorerView::ConfirmRestore;
+                                        restorer_notice =
+                                            "RESTORE USES CACHED PACKAGE ARCHIVES.".into();
+                                        scroll_offset = 0;
+                                    } else {
+                                        restorer_notice =
+                                            "THIS MANIFEST HAS NO SAVED PACKAGE ARCHIVES.".into();
+                                    }
+                                }
+                                KeyCode::Esc | KeyCode::Backspace => {
+                                    restorer_view = RestorerView::SnapshotList;
+                                    scroll_offset = 0;
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    scroll_offset = move_scroll(scroll_offset, max_scroll, -1);
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    scroll_offset = move_scroll(scroll_offset, max_scroll, 1);
+                                }
+                                KeyCode::PageUp => {
+                                    scroll_offset = move_scroll(
+                                        scroll_offset,
+                                        max_scroll,
+                                        -i32::from(page_size),
+                                    );
+                                }
+                                KeyCode::PageDown => {
+                                    scroll_offset = move_scroll(
+                                        scroll_offset,
+                                        max_scroll,
+                                        i32::from(page_size),
+                                    );
+                                }
+                                KeyCode::Home => scroll_offset = 0,
+                                KeyCode::End => scroll_offset = max_scroll,
+                                KeyCode::Char('q') => break,
+                                _ => {}
+                            },
+                            RestorerView::ConfirmRestore => match key.code {
+                                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                    if let Some(snapshot) =
+                                        restorer_snapshots.get(restorer_selection)
+                                    {
+                                        command_to_start = Some((
+                                            "restorer-restore".to_string(),
+                                            vec![
+                                                "restorer".into(),
+                                                "restore".into(),
+                                                snapshot.id.clone(),
+                                                "--yes".into(),
+                                                "--json".into(),
+                                            ],
+                                        ));
+                                        restorer_notice =
+                                            "RESTORING THE SELECTED PACKAGE VERSIONS...".into();
+                                    } else {
+                                        restorer_view = RestorerView::SnapshotList;
+                                        restorer_notice = "NO SNAPSHOT IS SELECTED.".into();
+                                    }
+                                }
+                                KeyCode::Char('n')
+                                | KeyCode::Char('N')
+                                | KeyCode::Esc
+                                | KeyCode::Backspace => {
+                                    restorer_view = RestorerView::SnapshotDetail;
+                                    restorer_notice = "RESTORE CANCELLED.".into();
+                                    scroll_offset = 0;
+                                }
+                                KeyCode::Char('q') => break,
+                                _ => {}
+                            },
+                            RestorerView::Result => match key.code {
+                                KeyCode::Esc | KeyCode::Backspace => {
+                                    restorer_view = RestorerView::SnapshotList;
+                                    scroll_offset = 0;
+                                }
+                                KeyCode::Up | KeyCode::Char('k') => {
+                                    scroll_offset = move_scroll(scroll_offset, max_scroll, -1);
+                                }
+                                KeyCode::Down | KeyCode::Char('j') => {
+                                    scroll_offset = move_scroll(scroll_offset, max_scroll, 1);
+                                }
+                                KeyCode::PageUp => {
+                                    scroll_offset = move_scroll(
+                                        scroll_offset,
+                                        max_scroll,
+                                        -i32::from(page_size),
+                                    );
+                                }
+                                KeyCode::PageDown => {
+                                    scroll_offset = move_scroll(
+                                        scroll_offset,
+                                        max_scroll,
+                                        i32::from(page_size),
+                                    );
+                                }
+                                KeyCode::Home => scroll_offset = 0,
+                                KeyCode::End => scroll_offset = max_scroll,
+                                KeyCode::Char('q') => break,
+                                _ => {}
+                            },
+                        }
+
+                        if let Some((action, arguments)) = command_to_start {
+                            command_stdout.clear();
+                            command_stderr.clear();
+                            active_command = Some(action);
+                            child_finished = false;
+                            stdout_finished = false;
+                            let borrowed_arguments: Vec<&str> =
+                                arguments.iter().map(String::as_str).collect();
+                            match launch_librarian_command(
+                                &mut terminal,
+                                &output_sender,
+                                &borrowed_arguments,
+                                "restorer",
+                            ) {
+                                Ok(command_child) => child = Some(command_child),
+                                Err(error) => {
+                                    active_command = None;
+                                    restorer_view = RestorerView::Result;
+                                    restorer_result_lines =
+                                        vec![format!("Could not start operation: {error}")];
+                                    restorer_notice = "RESTORATION COULD NOT START.".into();
+                                }
+                            }
+                        }
+                        continue;
+                    }
+
                     if (mode == Some("doctor") || mode == Some("archeologist")) && child.is_none() {
                         let mut command_to_start: Option<(String, Vec<String>, String)> = None;
                         if mode == Some("doctor") {
@@ -2103,7 +3216,9 @@ fn main() -> io::Result<()> {
                                 match key.code {
                                     KeyCode::Esc | KeyCode::Backspace => {
                                         doctor_show_results = false;
+                                        doctor_command_output = false;
                                         doctor_checks.clear();
+                                        doctor_operation_lines.clear();
                                         doctor_notice = "THE INFIRMARY IS READY.".to_string();
                                         scroll_offset = 0;
                                         follow_output = true;
@@ -2140,11 +3255,16 @@ fn main() -> io::Result<()> {
                                             doctor_menu_selection.saturating_sub(1);
                                     }
                                     KeyCode::Down | KeyCode::Char('j') => {
-                                        doctor_menu_selection = (doctor_menu_selection + 1).min(2);
+                                        doctor_menu_selection = (doctor_menu_selection + 1).min(5);
                                     }
+                                    KeyCode::Home => doctor_menu_selection = 0,
+                                    KeyCode::End => doctor_menu_selection = 5,
                                     KeyCode::Char('1') => doctor_menu_selection = 0,
                                     KeyCode::Char('2') => doctor_menu_selection = 1,
                                     KeyCode::Char('3') => doctor_menu_selection = 2,
+                                    KeyCode::Char('4') => doctor_menu_selection = 3,
+                                    KeyCode::Char('5') => doctor_menu_selection = 4,
+                                    KeyCode::Char('6') => doctor_menu_selection = 5,
                                     KeyCode::Char('q') => break,
                                     KeyCode::Esc => break,
                                     KeyCode::Enter => match doctor_menu_selection {
@@ -2169,6 +3289,30 @@ fn main() -> io::Result<()> {
                                             doctor_notice =
                                                 "VERIFYING PACMONSTER INSTALLATION...".to_string();
                                         }
+                                        2..=4 => {
+                                            let (label, arguments) = match doctor_menu_selection {
+                                                2 => {
+                                                    ("REFRESHING STATUS...", vec!["refresh-status"])
+                                                }
+                                                3 => (
+                                                    "READING CACHED STATUS...",
+                                                    vec!["status", "--json"],
+                                                ),
+                                                _ => (
+                                                    "READING DETAILED STATUS...",
+                                                    vec!["status", "--verbose"],
+                                                ),
+                                            };
+                                            command_to_start = Some((
+                                                "doctor-utility".to_string(),
+                                                arguments
+                                                    .iter()
+                                                    .map(|arg| (*arg).to_string())
+                                                    .collect(),
+                                                "witchdoctor".to_string(),
+                                            ));
+                                            doctor_notice = label.to_string();
+                                        }
                                         _ => break,
                                     },
                                     _ => {}
@@ -2185,6 +3329,8 @@ fn main() -> io::Result<()> {
                                         archeologist_selection =
                                             (archeologist_selection + 1).min(3);
                                     }
+                                    KeyCode::Home => archeologist_selection = 0,
+                                    KeyCode::End => archeologist_selection = 3,
                                     KeyCode::Enter => match archeologist_selection {
                                         0 | 1 => {
                                             let issues = archeologist_selection == 1;
@@ -2226,6 +3372,11 @@ fn main() -> io::Result<()> {
                                     KeyCode::Esc => {
                                         archeologist_view = ArcheologistView::Menu;
                                         archeologist_query.clear();
+                                    }
+                                    KeyCode::Char('c')
+                                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                    {
+                                        break;
                                     }
                                     KeyCode::Enter if !archeologist_query.trim().is_empty() => {
                                         command_to_start = Some((
@@ -2328,8 +3479,12 @@ fn main() -> io::Result<()> {
                                         librarian_menu_selection.saturating_sub(1);
                                 }
                                 KeyCode::Down | KeyCode::Char('j') => {
-                                    librarian_menu_selection =
-                                        (librarian_menu_selection + 1).min(2);
+                                    librarian_menu_selection = (librarian_menu_selection + 1)
+                                        .min(LIBRARIAN_MENU_ENTRIES.len() - 1);
+                                }
+                                KeyCode::Home => librarian_menu_selection = 0,
+                                KeyCode::End => {
+                                    librarian_menu_selection = LIBRARIAN_MENU_ENTRIES.len() - 1;
                                 }
                                 KeyCode::Enter => match librarian_menu_selection {
                                     0 => {
@@ -2344,6 +3499,12 @@ fn main() -> io::Result<()> {
                                         ));
                                     }
                                     1 => {
+                                        librarian_target_snapshot = false;
+                                        librarian_target_id.clear();
+                                        librarian_view = LibrarianView::TargetInput;
+                                        librarian_notice = "FILTER THE CATALOGUE BY TARGET.".into();
+                                    }
+                                    2 => {
                                         librarian_notice = "ENTERING NEW VOLUMES...".to_string();
                                         command_to_start = Some((
                                             "librarian-snapshot".to_string(),
@@ -2354,15 +3515,80 @@ fn main() -> io::Result<()> {
                                             ],
                                         ));
                                     }
+                                    3 => {
+                                        librarian_target_snapshot = true;
+                                        librarian_target_id.clear();
+                                        librarian_view = LibrarianView::TargetInput;
+                                        librarian_notice =
+                                            "CHOOSE A TARGET FOR THE NEW SNAPSHOT.".into();
+                                    }
+                                    4..=6 => {
+                                        let arguments = LIBRARIAN_MENU_COMMANDS
+                                            [librarian_menu_selection]
+                                            .to_vec();
+                                        command_to_start = Some((
+                                            "librarian-utility".to_string(),
+                                            arguments
+                                                .iter()
+                                                .map(|arg| (*arg).to_string())
+                                                .collect(),
+                                        ));
+                                        librarian_notice = format!(
+                                            "RUNNING {}...",
+                                            LIBRARIAN_MENU_ENTRIES[librarian_menu_selection].0
+                                        );
+                                    }
                                     _ => break,
                                 },
-                                KeyCode::Char('1') => {
-                                    librarian_menu_selection = 0;
+                                KeyCode::Char(digit @ '1'..='8') => {
+                                    librarian_menu_selection =
+                                        digit.to_digit(10).unwrap_or(1).saturating_sub(1) as usize;
                                 }
-                                KeyCode::Char('2') => {
-                                    librarian_menu_selection = 1;
+                                KeyCode::Char('q') | KeyCode::Esc => break,
+                                _ => {}
+                            },
+                            LibrarianView::TargetInput => match key.code {
+                                KeyCode::Enter if !librarian_target_id.trim().is_empty() => {
+                                    let (action, operation) = if librarian_target_snapshot {
+                                        ("librarian-snapshot", "snapshot")
+                                    } else {
+                                        ("librarian-list", "list")
+                                    };
+                                    librarian_notice = if librarian_target_snapshot {
+                                        "ENTERING A VOLUME FOR THE SELECTED TARGET...".into()
+                                    } else {
+                                        "OPENING THE SELECTED TARGET'S CATALOGUE...".into()
+                                    };
+                                    command_to_start = Some((
+                                        action.to_string(),
+                                        vec![
+                                            "librarian".into(),
+                                            operation.into(),
+                                            librarian_target_id.trim().to_string(),
+                                            "--json".into(),
+                                        ],
+                                    ));
                                 }
-                                KeyCode::Char('3') | KeyCode::Char('q') | KeyCode::Esc => break,
+                                KeyCode::Enter => {
+                                    librarian_notice = "ENTER A TARGET ID FIRST.".into();
+                                }
+                                KeyCode::Esc => {
+                                    librarian_view = LibrarianView::Menu;
+                                    librarian_target_id.clear();
+                                }
+                                KeyCode::Char('c')
+                                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    break;
+                                }
+                                KeyCode::Backspace => {
+                                    librarian_target_id.pop();
+                                }
+                                KeyCode::Char(character)
+                                    if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                {
+                                    librarian_target_id.push(character);
+                                }
                                 _ => {}
                             },
                             LibrarianView::SnapshotList => match key.code {
@@ -2393,6 +3619,19 @@ fn main() -> io::Result<()> {
                                         ],
                                     ));
                                 }
+                                KeyCode::Home if !librarian_snapshots.is_empty() => {
+                                    librarian_snapshot_selection = 0;
+                                }
+                                KeyCode::End if !librarian_snapshots.is_empty() => {
+                                    librarian_snapshot_selection = librarian_snapshots.len() - 1;
+                                }
+                                KeyCode::Char(digit @ '1'..='9')
+                                    if (digit.to_digit(10).unwrap_or(1) as usize)
+                                        <= librarian_snapshots.len() =>
+                                {
+                                    librarian_snapshot_selection =
+                                        digit.to_digit(10).unwrap_or(1) as usize - 1;
+                                }
                                 KeyCode::Char('s') => {
                                     librarian_notice = "ENTERING NEW VOLUMES...".to_string();
                                     command_to_start = Some((
@@ -2404,16 +3643,18 @@ fn main() -> io::Result<()> {
                                         ],
                                     ));
                                 }
-                                KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('q') => {
+                                KeyCode::Esc | KeyCode::Backspace => {
                                     librarian_view = LibrarianView::Menu;
                                 }
+                                KeyCode::Char('q') => break,
                                 _ => {}
                             },
                             LibrarianView::SnapshotDetail => match key.code {
-                                KeyCode::Esc | KeyCode::Backspace | KeyCode::Char('q') => {
+                                KeyCode::Esc | KeyCode::Backspace => {
                                     librarian_view = LibrarianView::SnapshotList;
                                     scroll_offset = 0;
                                 }
+                                KeyCode::Char('q') => break,
                                 KeyCode::Up | KeyCode::Char('k') => {
                                     scroll_offset = move_scroll(scroll_offset, max_scroll, -1);
                                 }
@@ -2521,6 +3762,8 @@ fn main() -> io::Result<()> {
                                 let message = "An interrupt is already in progress.".to_string();
                                 if mode == Some("librarian") {
                                     librarian_notice = message;
+                                } else if mode == Some("restorer") {
+                                    restorer_notice = message;
                                 } else {
                                     output.push_back(message);
                                 }
@@ -2528,6 +3771,8 @@ fn main() -> io::Result<()> {
                                 let message = format!("Could not interrupt operation: {error}");
                                 if mode == Some("librarian") {
                                     librarian_notice = message;
+                                } else if mode == Some("restorer") {
+                                    restorer_notice = message;
                                 } else {
                                     output.push_back(message);
                                 }
@@ -2538,6 +3783,8 @@ fn main() -> io::Result<()> {
                                         .to_string();
                                 if mode == Some("librarian") {
                                     librarian_notice = message;
+                                } else if mode == Some("restorer") {
+                                    restorer_notice = message;
                                 } else {
                                     output.push_back(message);
                                 }
@@ -2563,8 +3810,11 @@ fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        START_MENU_ENTRIES, START_TUI_MODES, animated_ghost, format_license, format_readme,
-        move_scroll, progress_display, wrapped_line_count,
+        GHOSTHUNTER_MENU_ENTRIES, LIBRARIAN_MENU_COMMANDS, LIBRARIAN_MENU_ENTRIES,
+        LibrarianSnapshot, START_MENU_ENTRIES, START_TUI_MODES, SnapshotTarget, animated_ghost,
+        command_emits_structured_output, format_command_output, format_json_value, format_license,
+        format_log_message, format_readme, move_scroll, progress_display, snapshot_is_restorable,
+        wrapped_line_count,
     };
     use ratatui::text::Line;
 
@@ -2598,10 +3848,87 @@ mod tests {
 
     #[test]
     fn start_menu_tui_entries_match_their_launch_modes() {
-        assert_eq!(START_MENU_ENTRIES.len(), START_TUI_MODES.len() + 1);
-        assert_eq!(START_MENU_ENTRIES[4].0, "ADVISOR");
-        assert_eq!(START_TUI_MODES[4], "--run-advisor");
-        assert_eq!(START_MENU_ENTRIES[5].0, "RESTORATOR");
+        assert_eq!(START_MENU_ENTRIES.len(), START_TUI_MODES.len());
+        assert_eq!(START_MENU_ENTRIES[4].0, "RESTORER");
+        assert_eq!(START_TUI_MODES[4], "--run-restorer");
+        assert_eq!(START_MENU_ENTRIES[5].0, "ADVISOR");
+        assert_eq!(START_TUI_MODES[5], "--run-advisor");
+    }
+
+    #[test]
+    fn maintenance_actions_are_available_in_their_thematic_menus() {
+        assert_eq!(GHOSTHUNTER_MENU_ENTRIES.len(), 3);
+        assert_eq!(LIBRARIAN_MENU_ENTRIES.len(), LIBRARIAN_MENU_COMMANDS.len());
+        assert!(
+            LIBRARIAN_MENU_ENTRIES
+                .iter()
+                .all(|(_label, description)| !description.is_empty())
+        );
+        assert_eq!(LIBRARIAN_MENU_COMMANDS[4], ["refresh"]);
+        assert_eq!(LIBRARIAN_MENU_COMMANDS[5], ["inventory", "--json"]);
+        assert_eq!(LIBRARIAN_MENU_COMMANDS[6], ["history", "--json"]);
+    }
+
+    #[test]
+    fn structured_results_are_presented_as_readable_fields() {
+        let value = serde_json::json!({
+            "target": {"name": "home-node", "kind": "host"},
+            "package_count": 2,
+            "packages": {"pacmonster": "0.9.6", "linux": "6.1"},
+            "restorable": true
+        });
+        let display = format_json_value(&value).join("\n");
+        assert!(display.contains("Target"));
+        assert!(display.contains("Name: home-node"));
+        assert!(display.contains("Package Count: 2"));
+        assert!(display.contains("pacmonster — 0.9.6"));
+        assert!(display.contains("Restorable: Yes"));
+        assert!(!display.contains('{'));
+        assert!(!display.contains('}'));
+    }
+
+    #[test]
+    fn structured_log_messages_are_expanded_and_structured_streams_are_buffered() {
+        let message = format_log_message(r#"{"event":"assigned","target":"web-1"}"#);
+        assert!(message.contains("Event: assigned"));
+        assert!(message.contains("Target: web-1"));
+        assert!(!message.contains('{'));
+        assert!(command_emits_structured_output(Some("librarian-show")));
+        assert!(!command_emits_structured_output(Some("updates")));
+    }
+
+    #[test]
+    fn structured_command_output_never_falls_back_to_a_raw_json_dump() {
+        let lines = format_command_output(
+            &["{\"status\":\"success\",\"restored\":[\"kernel\"]}".to_string()],
+            &[],
+        );
+        let display = lines.join("\n");
+        assert!(display.contains("Status: success"));
+        assert!(display.contains("Restored (1)"));
+        assert!(display.contains("kernel"));
+        assert!(!display.contains('{'));
+        assert!(!display.contains('}'));
+
+        let malformed = format_command_output(&["{\"status\":".to_string()], &[]);
+        let display = malformed.join("\n");
+        assert!(display.contains("could not be interpreted"));
+        assert!(!display.contains("{\"status\":"));
+    }
+
+    #[test]
+    fn manifest_only_snapshot_cannot_be_marked_restorable() {
+        let snapshot = LibrarianSnapshot {
+            id: "snapshot-id".to_string(),
+            created: "2026-10-25T08:00:00Z".to_string(),
+            target: SnapshotTarget {
+                name: "host".to_string(),
+            },
+            package_count: 2,
+            archive_bytes: 0,
+            restorable: false,
+        };
+        assert!(!snapshot_is_restorable(&snapshot));
     }
 
     #[test]

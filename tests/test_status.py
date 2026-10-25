@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from pacmonster import archeologist, doctor, librarian, restaurator, update
+from pacmonster import archeologist, doctor, librarian, restorer, update
 from pacmonster import main as cli_main
 from pacmonster.events import EVENT_LOG, STATE_FILE, write_event
 from pacmonster.inventory import build_inventory
@@ -80,9 +80,34 @@ class PackageUpdatesTests(unittest.TestCase):
             cli_main.ghosthunter_command()
 
         run_tui.assert_called_once_with(
-            ["/usr/bin/pacmonster-tui", "--run-updates"],
+            ["/usr/bin/pacmonster-tui", "--run-ghosthunter"],
             check=False,
         )
+
+    def test_ghosthunter_confirm_launches_update_mode_with_prompts(self):
+        with (
+            patch.object(cli_main, "_tui_command", return_value=["/usr/bin/pacmonster-tui"]),
+            patch.object(
+                cli_main.subprocess,
+                "run",
+                return_value=SimpleNamespace(returncode=0),
+            ) as run_tui,
+        ):
+            cli_main.ghosthunter_command(confirm=True)
+
+        run_tui.assert_called_once_with(
+            ["/usr/bin/pacmonster-tui", "--run-updates-confirm"],
+            check=False,
+        )
+
+    def test_ghosthunter_cli_flag_enables_update_confirmation(self):
+        with (
+            patch.object(cli_main.sys, "argv", ["pacmonster", "ghosthunter", "--confirm"]),
+            patch.object(cli_main, "ghosthunter_command") as run_ghosthunter,
+        ):
+            cli_main._dispatch()
+
+        run_ghosthunter.assert_called_once_with(confirm=True)
 
     def test_ghosthunter_reports_missing_tui(self):
         stderr = StringIO()
@@ -134,6 +159,38 @@ class PackageUpdatesTests(unittest.TestCase):
 
         run_tui.assert_called_once_with("advisor")
 
+    def test_restorer_without_subcommand_launches_recovery_tui(self):
+        with (
+            patch.object(cli_main.sys, "argv", ["pacmonster", "restorer"]),
+            patch.object(cli_main, "_run_tui") as run_tui,
+        ):
+            cli_main._dispatch()
+
+        run_tui.assert_called_once_with("restorer")
+
+    def test_restorer_tui_alias_launches_recovery_tui(self):
+        with (
+            patch.object(cli_main.sys, "argv", ["pacmonster", "restorer", "tui"]),
+            patch.object(cli_main, "_run_tui") as run_tui,
+        ):
+            cli_main._dispatch()
+
+        run_tui.assert_called_once_with("restorer")
+
+    def test_restorer_list_subcommand_remains_available_in_cli(self):
+        with (
+            patch.object(cli_main.sys, "argv", ["pacmonster", "restorer", "list"]),
+            patch.object(cli_main, "restorer_command") as run_restorer,
+        ):
+            cli_main._dispatch()
+
+        run_restorer.assert_called_once_with(
+            "list",
+            None,
+            assume_yes=False,
+            json_output=False,
+        )
+
     def test_help_json_includes_advisor_and_start_commands(self):
         output = StringIO()
         with redirect_stdout(output):
@@ -142,6 +199,20 @@ class PackageUpdatesTests(unittest.TestCase):
         commands = json.loads(output.getvalue())
         self.assertIn("advisor", commands)
         self.assertIn("start", commands)
+        self.assertIn("restorer", commands)
+        self.assertIn("ghosthunter --confirm", commands)
+        self.assertFalse(any("restaurator" in command for command in commands))
+
+    def test_help_text_describes_commands_in_a_table(self):
+        output = StringIO()
+        with redirect_stdout(output):
+            cli_main.help_command()
+
+        help_text = output.getvalue()
+        self.assertIn("| COMMAND", help_text)
+        self.assertIn("| WHAT IT DOES", help_text)
+        self.assertIn("Open the update dashboard and action menu.", help_text)
+        self.assertIn("Restore package versions from a snapshot.", help_text)
 
     def test_archeologist_command_launches_tui(self):
         with (
@@ -546,7 +617,7 @@ class PackageUpdatesTests(unittest.TestCase):
             timeout=60,
         )
 
-    def test_restaurator_installs_only_archives_matching_snapshot_version(self):
+    def test_restorer_installs_only_archives_matching_snapshot_version(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             snapshot_id = "host-host-test"
@@ -591,36 +662,36 @@ class PackageUpdatesTests(unittest.TestCase):
                     return_value={"demo": "2.0"},
                 ),
                 patch.object(
-                    restaurator,
+                    restorer,
                     "_archive_package",
                     return_value=("demo", "1.0"),
                 ),
                 patch.object(
-                    restaurator.subprocess,
+                    restorer.subprocess,
                     "run",
                     return_value=process_result,
                 ) as run_command,
-                patch.object(restaurator, "acquire_lock", return_value=True),
-                patch.object(restaurator, "release_lock"),
+                patch.object(restorer, "acquire_lock", return_value=True),
+                patch.object(restorer, "release_lock"),
                 redirect_stdout(StringIO()),
             ):
-                result = restaurator.restore_snapshot(snapshot_id, assume_yes=True)
+                result = restorer.restore_snapshot(snapshot_id, assume_yes=True)
 
         self.assertEqual(result["status"], "success")
         self.assertIn(package_archive.name, result["restored"])
         self.assertEqual(run_command.call_args.args[0][:3], ["pacman", "-U", "--noconfirm"])
 
-    def test_restaurator_will_not_compete_with_an_existing_update(self):
+    def test_restorer_will_not_compete_with_an_existing_update(self):
         with (
-            patch.object(restaurator, "acquire_lock", return_value=False),
+            patch.object(restorer, "acquire_lock", return_value=False),
             patch.object(librarian, "load_snapshot") as load_snapshot,
         ):
-            result = restaurator.restore_snapshot("snapshot-id")
+            result = restorer.restore_snapshot("snapshot-id")
 
         self.assertEqual(result["status"], "locked")
         load_snapshot.assert_not_called()
 
-    def test_restaurator_matches_multiarch_deb_and_uses_local_dnf_archives(self):
+    def test_restorer_matches_multiarch_deb_and_uses_local_dnf_archives(self):
         with tempfile.TemporaryDirectory() as directory:
             cache_directory = Path(directory) / "package-cache"
             cache_directory.mkdir()
@@ -631,11 +702,11 @@ class PackageUpdatesTests(unittest.TestCase):
                 "packages": {"libdemo:amd64": "1.0"},
             }
             with patch.object(
-                restaurator,
+                restorer,
                 "_archive_package",
                 return_value=("libdemo:amd64", "1.0"),
             ):
-                archives, missing = restaurator._find_restore_packages(
+                archives, missing = restorer._find_restore_packages(
                     snapshot,
                     Path(directory),
                     {"libdemo:amd64": "2.0"},
@@ -644,7 +715,7 @@ class PackageUpdatesTests(unittest.TestCase):
         self.assertEqual(archives, [package_archive])
         self.assertEqual(missing, [])
         self.assertEqual(
-            restaurator._restore_command(
+            restorer._restore_command(
                 {"target": {"package_manager": "dnf"}},
                 [Path("/tmp/demo-1.0.rpm")],
             ),

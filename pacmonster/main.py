@@ -17,7 +17,7 @@ from .update import perform_update
 from .history import add_history
 from .history import load_history
 from .librarian import SnapshotError, create_snapshot, list_snapshots, load_snapshot
-from .restaurator import RestoreError, render_result, restore_snapshot
+from .restorer import RestoreError, render_result, restore_snapshot
 
 
 def render_inventory(data):
@@ -321,7 +321,7 @@ def librarian_command(command, target_id=None, json_output=False):
         print("No supported running hosts or containers found.")
 
 
-def restaurator_command(command, snapshot_id=None, assume_yes=False, json_output=False):
+def restorer_command(command, snapshot_id=None, assume_yes=False, json_output=False):
     """List snapshots or restore a selected package snapshot."""
 
     if command == "list":
@@ -336,7 +336,7 @@ def restaurator_command(command, snapshot_id=None, assume_yes=False, json_output
             librarian_command("list")
         return
     if command != "restore" or not snapshot_id:
-        print("Usage: pacmonster restaurator {list|restore SNAPSHOT_ID [--yes]}")
+        print("Usage: pacmonster restorer {list|restore SNAPSHOT_ID [--yes]}")
         sys.exit(2)
 
     try:
@@ -501,10 +501,10 @@ def _run_tui(mode):
         sys.exit(result.returncode)
 
 
-def ghosthunter_command():
-    """Launch the TUI and run all planned updates without a confirmation prompt."""
+def ghosthunter_command(confirm=False):
+    """Launch Ghosthunter, optionally retaining update confirmation prompts."""
 
-    _run_tui("updates")
+    _run_tui("updates-confirm" if confirm else "ghosthunter")
 
 
 def witchdoctor_command():
@@ -541,40 +541,53 @@ def history_command(json_output=False):
 
         print()
         print()
-def help_command(json_output=False):
-    """Print the supported CLI command names."""
+HELP_COMMANDS = [
+    ("refresh", "Rediscover supported systems and refresh the inventory cache."),
+    ("refresh-status", "Refresh inventory and cached package update status."),
+    ("inventory [--json]", "Display the latest cached inventory."),
+    ("status [--verbose] [--json]", "Display cached status; verbose includes package names."),
+    ("doctor [--json]", "Diagnose system and package-manager health."),
+    ("doctor --installation", "Check the Pacmonster CLI, Python package, and TUI."),
+    ("dry-run [--json]", "Preview planned update commands without applying them."),
+    ("update [--yes]", "Run package updates; --yes skips the initial confirmation."),
+    ("start", "Open the main menu for all Pacmonster interfaces."),
+    ("ghosthunter", "Open the update dashboard and action menu."),
+    ("ghosthunter --confirm", "Run updates while retaining the confirmation prompt."),
+    ("witchdoctor", "Open diagnostics, installation checks, and status tools."),
+    ("librarian", "Open snapshots, inventory, and update history."),
+    ("archeologist", "Browse logs, find issues, or search log text."),
+    ("restorer", "Open the snapshot recovery interface."),
+    ("advisor", "Browse help, README, license, and developer information."),
+    ("history [--json]", "Display recent update and maintenance history."),
+    ("help [--json]", "Show this command reference as a table or JSON list."),
+    ("librarian list [TARGET_ID]", "List snapshots, optionally filtered by target."),
+    ("librarian snapshot [TARGET_ID]", "Create snapshots for all targets or one target."),
+    ("librarian show SNAPSHOT_ID", "Display the contents of a saved snapshot."),
+    ("archeologist all", "Display available Pacmonster and package-manager logs."),
+    ("archeologist issues", "Show log records filtered to likely warnings and errors."),
+    ("archeologist search QUERY", "Search available log records for text."),
+    ("restorer list", "List snapshots that can be inspected for recovery."),
+    ("restorer restore SNAPSHOT_ID [--yes]", "Restore package versions from a snapshot."),
+]
 
-    commands = [
-        "refresh",
-        "refresh-status",
-        "inventory",
-        "status",
-        "status --verbose",
-        "doctor",
-        "doctor --installation",
-        "dry-run",
-        "update",
-        "start",
-        "ghosthunter",
-        "witchdoctor",
-        "librarian",
-        "archeologist",
-        "advisor",
-        "history",
-        "librarian list",
-        "librarian snapshot [TARGET_ID]",
-        "librarian show SNAPSHOT_ID",
-        "archeologist all",
-        "archeologist issues",
-        "archeologist search QUERY",
-        "restaurator list",
-        "restaurator restore SNAPSHOT_ID [--yes]",
-    ]
+
+def help_command(json_output=False):
+    """Print the supported commands and a concise description of each."""
+
+    commands = [command for command, _description in HELP_COMMANDS]
     if json_output:
         print(json.dumps(commands, indent=2))
     else:
-        for command in commands:
-            print(command)
+        command_width = max(len(command) for command in commands)
+        description_width = max(len(description) for _command, description in HELP_COMMANDS)
+        separator = f"+-{'-' * command_width}-+-{'-' * description_width}-+"
+        print("PACMONSTER COMMANDS")
+        print(separator)
+        print(f"| {'COMMAND'.ljust(command_width)} | {'WHAT IT DOES'.ljust(description_width)} |")
+        print(separator)
+        for command, description in HELP_COMMANDS:
+            print(f"| {command.ljust(command_width)} | {description.ljust(description_width)} |")
+        print(separator)
 
 
 def _dispatch():
@@ -614,7 +627,7 @@ def _dispatch():
     elif cmd == "start":
         start_command()
     elif cmd == "ghosthunter":
-        ghosthunter_command()
+        ghosthunter_command(confirm="--confirm" in sys.argv[2:])
     elif cmd == "witchdoctor":
         witchdoctor_command()
     elif cmd == "advisor":
@@ -644,15 +657,22 @@ def _dispatch():
                 argument,
                 json_output="--json" in sys.argv
             )
-    elif cmd == "restaurator":
-        operation = sys.argv[2] if len(sys.argv) > 2 else "list"
-        snapshot_id = sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else None
-        restaurator_command(
-            operation,
-            snapshot_id,
-            assume_yes="--yes" in sys.argv,
-            json_output="--json" in sys.argv
-        )
+    elif cmd == "restorer":
+        operation = sys.argv[2] if len(sys.argv) > 2 else None
+        if operation is None or operation == "tui":
+            _run_tui("restorer")
+        else:
+            snapshot_id = (
+                sys.argv[3]
+                if len(sys.argv) > 3 and not sys.argv[3].startswith("--")
+                else None
+            )
+            restorer_command(
+                operation,
+                snapshot_id,
+                assume_yes="--yes" in sys.argv,
+                json_output="--json" in sys.argv
+            )
     else:
         help_command()
 

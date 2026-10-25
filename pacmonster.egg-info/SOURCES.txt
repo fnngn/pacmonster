@@ -16,7 +16,7 @@ pacmonster/lock.py
 pacmonster/main.py
 pacmonster/models.py
 pacmonster/reboot.py
-pacmonster/restaurator.py
+pacmonster/restorer.py
 pacmonster/status.py
 pacmonster/update.py
 pacmonster.egg-info/PKG-INFO
