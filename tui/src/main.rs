@@ -2265,6 +2265,11 @@ fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
 
 /// Run the dashboard, optional maintenance command, and terminal event loop.
 fn main() -> io::Result<()> {
+    if std::env::args().any(|argument| argument == "--version" || argument == "-V") {
+        println!("pacmonster-tui {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     std::panic::set_hook(Box::new(|panic| {
         restore_terminal();
         eprintln!("{panic}");

@@ -22,10 +22,10 @@ jobs:
         include:
           - architecture: x86_64
             runner: ubuntu-22.04
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
           - architecture: aarch64
             runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
+            target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -36,22 +36,19 @@ jobs:
           package_version="$(sed -n 's/^version = "\(.*\)"/\1/p' tui/Cargo.toml | head -n 1)"
           test "$RELEASE_TAG" = "v$package_version"
       - name: Build TUI
-        env:
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static -C link-arg=-static
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static -C link-arg=-static
         run: |
-          sudo apt-get update
-          sudo apt-get install -y musl-tools
+          package_version="$(sed -n 's/^version = "\(.*\)"/\1/p' tui/Cargo.toml | head -n 1)"
           rustup toolchain install stable --profile minimal --target "${{ matrix.target }}"
           cargo +stable build --locked --release --target "${{ matrix.target }}" --manifest-path tui/Cargo.toml
           install -D "tui/target/${{ matrix.target }}/release/pacmonster-tui" \
             "dist/pacmonster-tui-linux-${{ matrix.architecture }}"
-          if readelf -lW "dist/pacmonster-tui-linux-${{ matrix.architecture }}" | grep -Fq ' INTERP '; then
-            echo "The TUI binary still requires a dynamic loader." >&2
+          ldd "dist/pacmonster-tui-linux-${{ matrix.architecture }}" | tee /tmp/pacmonster-tui-ldd.txt
+          if grep -Fq 'not found' /tmp/pacmonster-tui-ldd.txt; then
+            echo "The TUI binary has unresolved shared-library dependencies." >&2
             exit 1
           fi
+          test "$("dist/pacmonster-tui-linux-${{ matrix.architecture }}" --version)" = \
+            "pacmonster-tui $package_version"
       - uses: actions/upload-artifact@v4
         with:
           name: pacmonster-tui-${{ matrix.architecture }}
