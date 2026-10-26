@@ -190,11 +190,13 @@ else
     ensure_native_build_tools
     ensure_rust_toolchain
     CARGO_BIN="$(command -v cargo)"
-    CARGO_TARGET_DIR="$BUILD_ROOT/tui-target" "$CARGO_BIN" build \
+    CARGO_TARGET_DIR="/var/cache/pacmonster/cargo-target"
+    install -d -o root -g root -m 0755 "$CARGO_TARGET_DIR"
+    CARGO_TARGET_DIR="$CARGO_TARGET_DIR" "$CARGO_BIN" build \
         --locked \
         --release \
         --manifest-path "$SCRIPT_DIR/tui/Cargo.toml"
-    cp "$BUILD_ROOT/tui-target/release/pacmonster-tui" "$TUI_BINARY"
+    cp "$CARGO_TARGET_DIR/release/pacmonster-tui" "$TUI_BINARY"
 fi
 install -m 755 "$TUI_BINARY" /usr/local/bin/pacmonster-tui
 if [[ -x "$CARGO_HOME/bin/cargo" ]]; then

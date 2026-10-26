@@ -186,8 +186,10 @@ x86_64 and ARM64 Linux, it downloads and verifies a prebuilt TUI, so Rust/Cargo
 and a compiler are not needed. If a matching binary is unavailable (for
 example, when installing from an unreleased checkout or on another architecture),
 the installer builds the TUI from source and can bootstrap Rust/Cargo 1.85 or
-newer and native build tools. The command is installed in `/usr/local/bin`, so
-`sudo pacmonster` does not rely on a user's private executable path.
+newer and native build tools. Build artifacts are cached under
+`/var/cache/pacmonster/cargo-target`, so later installs reuse dependencies and
+only rebuild changed components. The command is installed in `/usr/local/bin`,
+so `sudo pacmonster` does not rely on a user's private executable path.
 
 Check the installation:
 
