@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to build or replace assets for
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -25,7 +31,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify release version
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           package_version="$(sed -n 's/^version = "\(.*\)"/\1/p' tui/Cargo.toml | head -n 1)"
           test "$RELEASE_TAG" = "v$package_version"
@@ -33,6 +39,8 @@ jobs:
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
@@ -40,6 +48,10 @@ jobs:
           cargo +stable build --locked --release --target "${{ matrix.target }}" --manifest-path tui/Cargo.toml
           install -D "tui/target/${{ matrix.target }}/release/pacmonster-tui" \
             "dist/pacmonster-tui-linux-${{ matrix.architecture }}"
+          if readelf -l "dist/pacmonster-tui-linux-${{ matrix.architecture }}" | grep -q INTERP; then
+            echo "The TUI binary still requires a dynamic loader." >&2
+            exit 1
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: pacmonster-tui-${{ matrix.architecture }}
@@ -60,7 +72,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: |
           if gh release view "$RELEASE_TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$RELEASE_TAG" dist/* --repo "$REPOSITORY" --clobber
