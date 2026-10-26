@@ -148,6 +148,28 @@ class PackageUpdatesTests(unittest.TestCase):
         self.assertEqual(errors.getvalue(), "[container-a] snapshot progress\n")
         perform.assert_called_once_with(True, json_output=True)
 
+    def test_update_json_report_is_emitted_before_history_persistence(self):
+        result = [{
+            "id": "host",
+            "name": "host",
+            "snapshot_id": "snapshot-host",
+            "success": True,
+            "returncode": 0,
+            "duration": 1.0,
+            "packages": [],
+        }]
+        output = StringIO()
+        with (
+            patch.object(cli_main, "perform_update", return_value=result),
+            patch.object(cli_main, "add_history", side_effect=OSError("history unavailable")),
+            redirect_stdout(output),
+        ):
+            with self.assertRaisesRegex(OSError, "history unavailable"):
+                cli_main.update_command(assume_yes=True, json_output=True)
+
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["systems"][0]["name"], "host")
+
     def test_update_cli_dispatch_passes_json_flag(self):
         with (
             patch.object(

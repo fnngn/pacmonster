@@ -2136,6 +2136,33 @@ fn format_update_report(stdout: &[String]) -> Result<Vec<String>, String> {
     Ok(lines)
 }
 
+fn format_update_report_error(
+    error: &str,
+    stdout: &[String],
+    stderr: &[String],
+    exit_code: i32,
+) -> Vec<String> {
+    let mut lines = vec![error.to_string()];
+    lines.push(format!("Update command exited with status {exit_code}."));
+    for (label, details) in [("COMMAND STDERR", stderr), ("COMMAND STDOUT", stdout)] {
+        if details.is_empty() {
+            continue;
+        }
+        lines.push(label.to_string());
+        let formatted = if label == "COMMAND STDOUT" {
+            format_command_output(details, &[])
+        } else {
+            details
+                .iter()
+                .map(|line| format_log_message(line))
+                .filter(|line| !line.is_empty())
+                .collect()
+        };
+        lines.extend(formatted);
+    }
+    lines
+}
+
 fn format_log_message(message: &str) -> String {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(message) else {
         return message.to_string();
@@ -2464,7 +2491,12 @@ fn main() -> io::Result<()> {
                                 };
                             }
                             Err(error) => {
-                                ghosthunter_report_lines = vec![error.clone()];
+                                ghosthunter_report_lines = format_update_report_error(
+                                    &error,
+                                    &command_stdout,
+                                    &command_stderr,
+                                    exit_code,
+                                );
                                 ghosthunter_view = GhosthunterView::Report;
                                 ghosthunter_notice = error;
                             }
@@ -4034,8 +4066,9 @@ mod tests {
         GHOSTHUNTER_MENU_ENTRIES, LIBRARIAN_MENU_COMMANDS, LIBRARIAN_MENU_ENTRIES,
         LibrarianSnapshot, START_MENU_ENTRIES, START_TUI_MODES, SnapshotTarget, animated_ghost,
         command_emits_structured_output, format_command_output, format_json_value, format_license,
-        format_log_message, format_readme, format_update_report, keep_row_visible, move_scroll,
-        progress_display, snapshot_is_restorable, wrapped_line_count,
+        format_log_message, format_readme, format_update_report, format_update_report_error,
+        keep_row_visible, move_scroll, progress_display, snapshot_is_restorable,
+        wrapped_line_count,
     };
     use ratatui::text::Line;
 
@@ -4178,6 +4211,20 @@ mod tests {
                 "Another update is already running."
             ]
         );
+    }
+
+    #[test]
+    fn missing_update_report_includes_process_diagnostics() {
+        let lines = format_update_report_error(
+            "Could not read update report: EOF",
+            &[],
+            &["history could not be read".to_string()],
+            1,
+        );
+        assert_eq!(lines[0], "Could not read update report: EOF");
+        assert!(lines.contains(&"Update command exited with status 1.".to_string()));
+        assert!(lines.contains(&"COMMAND STDERR".to_string()));
+        assert!(lines.contains(&"history could not be read".to_string()));
     }
 
     #[test]

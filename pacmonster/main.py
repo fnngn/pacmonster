@@ -514,6 +514,11 @@ def update_command(assume_yes=False, json_output=False):
     failed = len(result) - updated
     duration = round(sum(item.get("duration", 0) for item in result), 1)
 
+    if json_output:
+        print(json.dumps(report, indent=2))
+    else:
+        _print_update_report(report)
+
     add_history(
         "update",
         {
@@ -537,11 +542,6 @@ def update_command(assume_yes=False, json_output=False):
             ],
         }
     )
-
-    if json_output:
-        print(json.dumps(report, indent=2))
-    else:
-        _print_update_report(report)
 
     if failed > 0:
         sys.exit(1)

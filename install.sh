@@ -81,6 +81,55 @@ PY
     fi
 }
 
+download_release_tui() {
+    local destination="$1"
+    local asset_arch
+    case "$(uname -m)" in
+        x86_64|amd64) asset_arch="x86_64" ;;
+        aarch64|arm64) asset_arch="aarch64" ;;
+        *) return 1 ;;
+    esac
+
+    "$PYTHON_BIN" - "$EXPECTED_VERSION" "$asset_arch" "$destination" <<'PY'
+import hashlib
+import sys
+import urllib.error
+import urllib.request
+
+version, architecture, destination = sys.argv[1:]
+repository = "fnngn/pacmonster"
+filename = f"pacmonster-tui-linux-{architecture}"
+base_url = f"https://github.com/{repository}/releases/download/v{version}"
+
+try:
+    with urllib.request.urlopen(f"{base_url}/{filename}", timeout=30) as response:
+        binary = response.read()
+    with urllib.request.urlopen(f"{base_url}/SHA256SUMS", timeout=30) as response:
+        checksums = response.read().decode("ascii")
+except urllib.error.HTTPError as error:
+    if error.code == 404:
+        sys.exit(1)
+    print(f"Could not download the prebuilt Pacmonster TUI: {error}", file=sys.stderr)
+    sys.exit(2)
+except (OSError, UnicodeError) as error:
+    print(f"Could not download the prebuilt Pacmonster TUI: {error}", file=sys.stderr)
+    sys.exit(2)
+
+expected = next(
+    (line.split()[0] for line in checksums.splitlines()
+     if len(line.split()) == 2 and line.split()[1] == filename),
+    None,
+)
+actual = hashlib.sha256(binary).hexdigest()
+if expected is None or actual != expected:
+    print("The downloaded Pacmonster TUI failed its SHA-256 check.", file=sys.stderr)
+    sys.exit(2)
+
+with open(destination, "wb") as output:
+    output.write(binary)
+PY
+}
+
 PYTHON_BIN="$(command -v python3)"
 SITE_PACKAGES="$("$PYTHON_BIN" -c 'import sysconfig; print(sysconfig.get_path("purelib", vars={"base": "/usr/local", "platbase": "/usr/local"}))')"
 BUILD_ROOT="$(mktemp -d /tmp/pacmonster-install.XXXXXX)"
@@ -129,15 +178,25 @@ if ! /usr/local/bin/pacmonster help >/dev/null; then
     exit 1
 fi
 
-ensure_native_build_tools
-ensure_rust_toolchain
-CARGO_BIN="$(command -v cargo)"
-CARGO_TARGET_DIR="$BUILD_ROOT/tui-target" "$CARGO_BIN" build \
-    --locked \
-    --release \
-    --manifest-path "$SCRIPT_DIR/tui/Cargo.toml"
-install -m 755 "$BUILD_ROOT/tui-target/release/pacmonster-tui" \
-    /usr/local/bin/pacmonster-tui
+TUI_BINARY="$BUILD_ROOT/pacmonster-tui"
+if download_release_tui "$TUI_BINARY"; then
+    echo "Using the verified prebuilt Pacmonster TUI for $(uname -m)."
+else
+    download_status=$?
+    if [[ "$download_status" -ne 1 ]]; then
+        exit "$download_status"
+    fi
+    echo "No prebuilt TUI is available for Pacmonster $INSTALLED_VERSION; building from source."
+    ensure_native_build_tools
+    ensure_rust_toolchain
+    CARGO_BIN="$(command -v cargo)"
+    CARGO_TARGET_DIR="$BUILD_ROOT/tui-target" "$CARGO_BIN" build \
+        --locked \
+        --release \
+        --manifest-path "$SCRIPT_DIR/tui/Cargo.toml"
+    cp "$BUILD_ROOT/tui-target/release/pacmonster-tui" "$TUI_BINARY"
+fi
+install -m 755 "$TUI_BINARY" /usr/local/bin/pacmonster-tui
 if [[ -x "$CARGO_HOME/bin/cargo" ]]; then
     for tool in cargo rustc rustup; do
         if [[ -x "$CARGO_HOME/bin/$tool" ]]; then
