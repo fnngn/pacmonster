@@ -34,7 +34,52 @@ struct StateGhost {
 enum GhosthunterView {
     Menu,
     Preview,
+    Report,
     Dashboard,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+struct UpdateReport {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    summary: UpdateSummary,
+    #[serde(default)]
+    updated_systems: Vec<UpdateSystem>,
+    #[serde(default)]
+    failed_systems: Vec<UpdateSystem>,
+    #[serde(default)]
+    systems: Vec<UpdateSystem>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+struct UpdateSummary {
+    systems_attempted: usize,
+    systems_succeeded: usize,
+    systems_failed: usize,
+    packages_changed: usize,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+struct UpdateSystem {
+    id: String,
+    name: String,
+    #[serde(default)]
+    packages: Vec<UpdatePackage>,
+    #[serde(default)]
+    package_report_error: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, serde::Deserialize)]
+struct UpdatePackage {
+    name: String,
+    change: String,
+    previous_version: Option<String>,
+    current_version: Option<String>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -392,10 +437,11 @@ fn render_doctor(
         .saturating_sub(report_area.height as usize)
         .min(u16::MAX as usize) as u16;
     *page_size = report_area.height.saturating_sub(1).max(1);
-    if !show_results || follow_output {
+    if !show_results {
+        keep_row_visible(scroll_offset, *max_scroll, *page_size, selection * 3);
+    } else if follow_output {
         *scroll_offset = *max_scroll;
     }
-    *scroll_offset = (*scroll_offset).min(*max_scroll);
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
@@ -541,7 +587,11 @@ fn render_archeologist(
         .saturating_sub(inner.height as usize)
         .min(u16::MAX as usize) as u16;
     *page_size = inner.height.saturating_sub(1).max(1);
-    *scroll_offset = (*scroll_offset).min(*max_scroll);
+    if view == ArcheologistView::Menu {
+        keep_row_visible(scroll_offset, *max_scroll, *page_size, selection * 3);
+    } else {
+        *scroll_offset = (*scroll_offset).min(*max_scroll);
+    }
     frame.render_widget(
         Paragraph::new(lines)
             .wrap(Wrap { trim: true })
@@ -563,7 +613,14 @@ fn render_archeologist(
     );
 }
 
-fn render_start_menu(frame: &mut ratatui::Frame<'_>, selection: usize, notice: &str) {
+fn render_start_menu(
+    frame: &mut ratatui::Frame<'_>,
+    selection: usize,
+    notice: &str,
+    scroll_offset: &mut u16,
+    max_scroll: &mut u16,
+    page_size: &mut u16,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -624,13 +681,26 @@ fn render_start_menu(frame: &mut ratatui::Frame<'_>, selection: usize, notice: &
             format!("       {description}"),
             Style::default().fg(GOLD),
         )));
+        lines.push(Line::from(""));
     }
     let menu = Block::default()
         .title(" DEPARTMENTS ")
         .title_style(Style::default().fg(GOLD))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(PETROL));
-    frame.render_widget(Paragraph::new(lines).block(menu), chunks[1]);
+    let inner = menu.inner(chunks[1]);
+    *max_scroll = wrapped_line_count(&lines, inner.width)
+        .saturating_sub(inner.height as usize)
+        .min(u16::MAX as usize) as u16;
+    *page_size = inner.height.max(1);
+    keep_row_visible(scroll_offset, *max_scroll, *page_size, selection * 3);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(menu)
+            .wrap(Wrap { trim: true })
+            .scroll((*scroll_offset, 0)),
+        chunks[1],
+    );
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(notice, Style::default().fg(GOLD))),
@@ -669,9 +739,8 @@ fn render_ghosthunter(
         .border_type(BorderType::Double)
         .border_style(Style::default().fg(PETROL));
     frame.render_widget(header, chunks[0]);
-    let (title, lines, footer): (&str, Vec<Line<'static>>, &str) = if view == GhosthunterView::Menu
-    {
-        (
+    let (title, lines, footer): (&str, Vec<Line<'static>>, &str) = match view {
+        GhosthunterView::Menu => (
             " SELECT AN UPDATE ACTION ",
             GHOSTHUNTER_MENU_ENTRIES
                 .iter()
@@ -697,20 +766,29 @@ fn render_ghosthunter(
                             format!("       {description}"),
                             Style::default().fg(GOLD),
                         )),
+                        Line::from(""),
                     ]
                 })
                 .collect(),
             MENU_KEYS,
-        )
-    } else {
-        (
+        ),
+        GhosthunterView::Preview => (
             " PLANNED PACKAGE ACTIONS ",
             preview_lines
                 .iter()
                 .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(PARCHMENT))))
                 .collect(),
             TEXT_KEYS,
-        )
+        ),
+        GhosthunterView::Report => (
+            " UPDATE RESULTS ",
+            preview_lines
+                .iter()
+                .map(|line| Line::from(Span::styled(line.clone(), Style::default().fg(PARCHMENT))))
+                .collect(),
+            TEXT_KEYS,
+        ),
+        GhosthunterView::Dashboard => unreachable!(),
     };
     let panel = Block::default()
         .title(title)
@@ -729,7 +807,7 @@ fn render_ghosthunter(
         .min(u16::MAX as usize) as u16;
     *page_size = inner.height.saturating_sub(1).max(1);
     if view == GhosthunterView::Menu {
-        *scroll_offset = 0;
+        keep_row_visible(scroll_offset, *max_scroll, *page_size, selection * 3);
     } else {
         *scroll_offset = (*scroll_offset).min(*max_scroll);
     }
@@ -1021,6 +1099,7 @@ fn render_advisor(
                     Style::default().fg(GOLD),
                 )),
                 Line::from(""),
+                Line::from(""),
             ]
         })
         .collect(),
@@ -1094,7 +1173,7 @@ fn render_advisor(
         .min(u16::MAX as usize) as u16;
     *page_size = inner.height.saturating_sub(1).max(1);
     if view == AdvisorView::Menu {
-        *scroll_offset = 0;
+        keep_row_visible(scroll_offset, *max_scroll, *page_size, selection * 3);
     } else {
         *scroll_offset = (*scroll_offset).min(*max_scroll);
     }
@@ -1422,6 +1501,7 @@ fn render_librarian(
                                 format!("       {description}"),
                                 Style::default().fg(GOLD),
                             )),
+                            Line::from(""),
                         ]
                     })
                     .collect();
@@ -1490,6 +1570,7 @@ fn render_librarian(
                         format!("    ID: {}", snapshot.id),
                         Style::default().fg(GOLD),
                     )));
+                    lines.push(Line::from(""));
                 }
                 (lines, true)
             }
@@ -1513,14 +1594,14 @@ fn render_librarian(
         if operation_running && follow_output {
             *scroll_offset = *max_scroll;
         } else if view == LibrarianView::Menu {
-            let selected_row = menu_selection * 2;
+            let selected_row = menu_selection * 3;
             if selected_row < usize::from(*scroll_offset) {
                 *scroll_offset = selected_row as u16;
             } else if selected_row >= usize::from(*scroll_offset) + usize::from(*page_size) {
                 *scroll_offset = selected_row.saturating_sub(usize::from(*page_size) - 1) as u16;
             }
         } else if view == LibrarianView::SnapshotList && !snapshots.is_empty() {
-            let selected_row = 2 + snapshot_selection * 2;
+            let selected_row = 2 + snapshot_selection * 3;
             if selected_row < usize::from(*scroll_offset) {
                 *scroll_offset = selected_row as u16;
             } else if selected_row >= usize::from(*scroll_offset) + usize::from(*page_size) {
@@ -1658,6 +1739,7 @@ fn render_restorer(
                         format!("       {description}"),
                         Style::default().fg(GOLD),
                     )),
+                    Line::from(""),
                 ]
             })
             .collect(),
@@ -1705,6 +1787,7 @@ fn render_restorer(
                     format!("    ID: {}", snapshot.id),
                     Style::default().fg(GOLD),
                 )));
+                lines.push(Line::from(""));
             }
             (
                 " SAVED SNAPSHOTS ",
@@ -1774,13 +1857,15 @@ fn render_restorer(
         .min(u16::MAX as usize) as u16;
     *page_size = inner.height.saturating_sub(1).max(1);
     if view == RestorerView::SnapshotList && !snapshots.is_empty() {
-        let selected_row = 2 + selection * 2;
+        let selected_row = 2 + selection * 3;
         if selected_row < usize::from(*scroll_offset) {
             *scroll_offset = selected_row as u16;
         } else if selected_row >= usize::from(*scroll_offset) + usize::from(*page_size) {
             *scroll_offset = selected_row.saturating_sub(usize::from(*page_size) - 1) as u16;
         }
-    } else if view == RestorerView::Menu || view == RestorerView::ConfirmRestore {
+    } else if view == RestorerView::Menu {
+        keep_row_visible(scroll_offset, *max_scroll, *page_size, selection * 3);
+    } else if view == RestorerView::ConfirmRestore {
         *scroll_offset = 0;
     }
     *scroll_offset = (*scroll_offset).min(*max_scroll);
@@ -1866,6 +1951,8 @@ fn command_emits_structured_output(command: Option<&str>) -> bool {
         command,
         Some(
             "ghosthunter-preview"
+                | "updates"
+                | "updates-confirm"
                 | "doctor-diagnostics"
                 | "doctor-installation"
                 | "doctor-utility"
@@ -1976,6 +2063,79 @@ fn format_json_value(value: &serde_json::Value) -> Vec<String> {
     lines
 }
 
+fn format_update_report(stdout: &[String]) -> Result<Vec<String>, String> {
+    let report: UpdateReport = serde_json::from_str(&stdout.join("\n"))
+        .map_err(|error| format!("Could not read update report: {error}"))?;
+    if report.status.as_deref() == Some("error") {
+        return Ok(vec![
+            "UPDATE DID NOT COMPLETE".to_string(),
+            report
+                .message
+                .or(report.error)
+                .unwrap_or_else(|| "The update command returned an error.".to_string()),
+        ]);
+    }
+    let mut lines = vec![
+        format!(
+            "Systems: {} attempted, {} succeeded, {} failed",
+            report.summary.systems_attempted,
+            report.summary.systems_succeeded,
+            report.summary.systems_failed
+        ),
+        format!("Packages changed: {}", report.summary.packages_changed),
+        String::new(),
+        "UPDATED SYSTEMS".to_string(),
+    ];
+
+    if report.updated_systems.is_empty() {
+        lines.push("No package version changes detected.".to_string());
+    } else {
+        for system in &report.updated_systems {
+            lines.push(format!("- {} (ID {})", system.name, system.id));
+            for package in &system.packages {
+                let previous = package
+                    .previous_version
+                    .as_deref()
+                    .unwrap_or("not installed");
+                let current = package.current_version.as_deref().unwrap_or("removed");
+                lines.push(format!(
+                    "  • {}: {} -> {} ({})",
+                    package.name, previous, current, package.change
+                ));
+            }
+        }
+    }
+
+    if !report.failed_systems.is_empty() {
+        lines.push(String::new());
+        lines.push("FAILED SYSTEMS".to_string());
+        for system in &report.failed_systems {
+            lines.push(format!("- {} (ID {})", system.name, system.id));
+            for package in &system.packages {
+                let previous = package
+                    .previous_version
+                    .as_deref()
+                    .unwrap_or("not installed");
+                let current = package.current_version.as_deref().unwrap_or("removed");
+                lines.push(format!(
+                    "  • {}: {} -> {} ({})",
+                    package.name, previous, current, package.change
+                ));
+            }
+        }
+    }
+
+    for system in &report.systems {
+        if let Some(error) = &system.package_report_error {
+            lines.push(format!(
+                "Could not inspect packages on {}: {}",
+                system.name, error
+            ));
+        }
+    }
+    Ok(lines)
+}
+
 fn format_log_message(message: &str) -> String {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(message) else {
         return message.to_string();
@@ -2056,6 +2216,17 @@ fn move_scroll(current: u16, maximum: u16, delta: i32) -> u16 {
     (i32::from(current) + delta).clamp(0, i32::from(maximum)) as u16
 }
 
+fn keep_row_visible(scroll_offset: &mut u16, maximum: u16, page_size: u16, selected_row: usize) {
+    let start = usize::from(*scroll_offset);
+    let page = usize::from(page_size.max(1));
+    if selected_row < start {
+        *scroll_offset = selected_row as u16;
+    } else if selected_row >= start + page {
+        *scroll_offset = selected_row.saturating_sub(page - 1) as u16;
+    }
+    *scroll_offset = (*scroll_offset).min(maximum);
+}
+
 /// Estimate rendered rows for wrapped text at the current viewport width.
 fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
     let width = usize::from(width.max(1));
@@ -2078,6 +2249,8 @@ fn main() -> io::Result<()> {
         Some("updates")
     } else if std::env::args().any(|argument| argument == "--run-updates-confirm") {
         Some("updates-confirm")
+    } else if std::env::args().any(|argument| argument == "--run-ghosthunter-confirm") {
+        Some("ghosthunter-confirm")
     } else if std::env::args().any(|argument| argument == "--run-ghosthunter") {
         Some("ghosthunter")
     } else if std::env::args().any(|argument| argument == "--run-librarian") {
@@ -2114,6 +2287,7 @@ fn main() -> io::Result<()> {
     let mut ghosthunter_view = GhosthunterView::Menu;
     let mut ghosthunter_selection = 0usize;
     let mut ghosthunter_preview_lines = Vec::new();
+    let mut ghosthunter_report_lines = Vec::new();
     let mut ghosthunter_notice = "CHOOSE AN UPDATE ACTION.".to_string();
     let mut advisor_view = AdvisorView::Menu;
     let mut advisor_selection = 0usize;
@@ -2148,21 +2322,29 @@ fn main() -> io::Result<()> {
     let mut exit_code = 0;
     let animation_started = Instant::now();
 
-    if let Some(mode) = mode.filter(|mode| *mode == "updates" || *mode == "updates-confirm") {
+    if let Some(mode) =
+        mode.filter(|mode| matches!(*mode, "updates" | "updates-confirm" | "ghosthunter-confirm"))
+    {
         let (arguments, action): (&[&str], &str) = match mode {
             "updates" => (&["update", "--yes"], "updates"),
             "updates-confirm" => (&["update"], "updates-confirm"),
+            "ghosthunter-confirm" => (&["update", "--json"], "updates-confirm"),
             _ => unreachable!(),
         };
+        if mode == "ghosthunter-confirm" {
+            ghosthunter_view = GhosthunterView::Dashboard;
+        }
         match start_command(&output_sender, arguments, action) {
             Ok(command_child) => {
                 let description = match mode {
                     "updates" => "Starting all planned updates (--yes)...",
-                    "updates-confirm" => "Starting updates with confirmation...",
+                    "updates-confirm" | "ghosthunter-confirm" => {
+                        "Starting updates with confirmation..."
+                    }
                     _ => unreachable!(),
                 };
                 output.push_back(description.to_string());
-                active_command = Some(mode.to_string());
+                active_command = Some(action.to_string());
                 child = Some(command_child);
             }
             Err(error) => {
@@ -2265,6 +2447,28 @@ fn main() -> io::Result<()> {
                         } else {
                             format!("PREVIEW COMMAND EXITED WITH STATUS {exit_code}.")
                         };
+                        scroll_offset = 0;
+                        follow_output = false;
+                    }
+                    Some("updates" | "updates-confirm")
+                        if matches!(mode, Some("ghosthunter" | "ghosthunter-confirm")) =>
+                    {
+                        match format_update_report(&command_stdout) {
+                            Ok(lines) => {
+                                ghosthunter_report_lines = lines;
+                                ghosthunter_view = GhosthunterView::Report;
+                                ghosthunter_notice = if exit_code == 0 {
+                                    "UPDATE RUN COMPLETE.".to_string()
+                                } else {
+                                    format!("UPDATE RUN FINISHED WITH STATUS {exit_code}.")
+                                };
+                            }
+                            Err(error) => {
+                                ghosthunter_report_lines = vec![error.clone()];
+                                ghosthunter_view = GhosthunterView::Report;
+                                ghosthunter_notice = error;
+                            }
+                        }
                         scroll_offset = 0;
                         follow_output = false;
                     }
@@ -2455,12 +2659,13 @@ fn main() -> io::Result<()> {
                     }
                     _ => {}
                 }
-                if mode == Some("updates")
-                    || mode == Some("updates-confirm")
-                    || matches!(
-                        active_command.as_deref(),
-                        Some("updates" | "updates-confirm")
-                    )
+                if !matches!(mode, Some("ghosthunter" | "ghosthunter-confirm"))
+                    && (mode == Some("updates")
+                        || mode == Some("updates-confirm")
+                        || matches!(
+                            active_command.as_deref(),
+                            Some("updates" | "updates-confirm")
+                        ))
                 {
                     completion_status =
                         format!("Updates finished (exit code {exit_code}). Exit TUI? [y/N]");
@@ -2478,18 +2683,30 @@ fn main() -> io::Result<()> {
             let animation_frame = (animation_started.elapsed().as_millis() / 250) as usize;
             terminal.draw(|frame| {
                 if mode == Some("start") {
-                    render_start_menu(frame, start_menu_selection, &start_menu_notice);
+                    render_start_menu(
+                        frame,
+                        start_menu_selection,
+                        &start_menu_notice,
+                        &mut scroll_offset,
+                        &mut max_scroll,
+                        &mut page_size,
+                    );
                     return;
                 }
-                if mode == Some("ghosthunter")
+                if matches!(mode, Some("ghosthunter" | "ghosthunter-confirm"))
                     && ghosthunter_view != GhosthunterView::Dashboard
                     && !completion_prompt
                 {
+                    let content = if ghosthunter_view == GhosthunterView::Report {
+                        &ghosthunter_report_lines
+                    } else {
+                        &ghosthunter_preview_lines
+                    };
                     render_ghosthunter(
                         frame,
                         ghosthunter_view,
                         ghosthunter_selection,
-                        &ghosthunter_preview_lines,
+                        content,
                         &ghosthunter_notice,
                         &mut scroll_offset,
                         &mut max_scroll,
@@ -2628,11 +2845,13 @@ fn main() -> io::Result<()> {
                     ]),
                 ];
                 let pool_block = Block::default()
-                    .title(if mode == Some("ghosthunter") {
-                        " GHOSTHUNTER  •  THE GHOST POOL "
-                    } else {
-                        " THE GHOST POOL "
-                    })
+                    .title(
+                        if matches!(mode, Some("ghosthunter" | "ghosthunter-confirm")) {
+                            " GHOSTHUNTER  •  THE GHOST POOL "
+                        } else {
+                            " THE GHOST POOL "
+                        },
+                    )
                     .title_style(Style::default().fg(GOLD))
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(PETROL));
@@ -2754,7 +2973,7 @@ fn main() -> io::Result<()> {
                         continue;
                     }
 
-                    if mode == Some("ghosthunter")
+                    if matches!(mode, Some("ghosthunter" | "ghosthunter-confirm"))
                         && ghosthunter_view != GhosthunterView::Dashboard
                         && child.is_none()
                         && !completion_prompt
@@ -2781,7 +3000,11 @@ fn main() -> io::Result<()> {
                                             ghosthunter_view = GhosthunterView::Dashboard;
                                             command_to_start = Some((
                                                 "updates".into(),
-                                                vec!["update".into(), "--yes".into()],
+                                                vec![
+                                                    "update".into(),
+                                                    "--yes".into(),
+                                                    "--json".into(),
+                                                ],
                                                 "RUNNING PLANNED UPDATES...".into(),
                                             ));
                                         }
@@ -2789,7 +3012,7 @@ fn main() -> io::Result<()> {
                                             ghosthunter_view = GhosthunterView::Dashboard;
                                             command_to_start = Some((
                                                 "updates-confirm".into(),
-                                                vec!["update".into()],
+                                                vec!["update".into(), "--json".into()],
                                                 "STARTING UPDATES WITH CONFIRMATION...".into(),
                                             ));
                                         }
@@ -2832,7 +3055,7 @@ fn main() -> io::Result<()> {
                                 }
                                 continue;
                             }
-                            GhosthunterView::Preview => match key.code {
+                            GhosthunterView::Preview | GhosthunterView::Report => match key.code {
                                 KeyCode::Up | KeyCode::Char('k') => {
                                     scroll_offset = move_scroll(scroll_offset, max_scroll, -1);
                                 }
@@ -3813,8 +4036,8 @@ mod tests {
         GHOSTHUNTER_MENU_ENTRIES, LIBRARIAN_MENU_COMMANDS, LIBRARIAN_MENU_ENTRIES,
         LibrarianSnapshot, START_MENU_ENTRIES, START_TUI_MODES, SnapshotTarget, animated_ghost,
         command_emits_structured_output, format_command_output, format_json_value, format_license,
-        format_log_message, format_readme, move_scroll, progress_display, snapshot_is_restorable,
-        wrapped_line_count,
+        format_log_message, format_readme, format_update_report, keep_row_visible, move_scroll,
+        progress_display, snapshot_is_restorable, wrapped_line_count,
     };
     use ratatui::text::Line;
 
@@ -3823,6 +4046,19 @@ mod tests {
         assert_eq!(move_scroll(3, 10, -8), 0);
         assert_eq!(move_scroll(8, 10, 5), 10);
         assert_eq!(move_scroll(5, 5, 1), 5);
+    }
+
+    #[test]
+    fn menu_selection_scrolls_into_view_without_exceeding_content() {
+        let mut offset = 0;
+        keep_row_visible(&mut offset, 10, 4, 8);
+        assert_eq!(offset, 5);
+
+        keep_row_visible(&mut offset, 10, 4, 2);
+        assert_eq!(offset, 2);
+
+        keep_row_visible(&mut offset, 3, 4, 8);
+        assert_eq!(offset, 3);
     }
 
     #[test]
@@ -3894,7 +4130,56 @@ mod tests {
         assert!(message.contains("Target: web-1"));
         assert!(!message.contains('{'));
         assert!(command_emits_structured_output(Some("librarian-show")));
-        assert!(!command_emits_structured_output(Some("updates")));
+        assert!(command_emits_structured_output(Some("updates")));
+    }
+
+    #[test]
+    fn update_report_lists_systems_and_changed_package_versions() {
+        let lines = format_update_report(&[r#"{
+            "summary": {
+                "systems_attempted": 2,
+                "systems_succeeded": 1,
+                "systems_failed": 1,
+                "packages_changed": 1
+            },
+            "updated_systems": [{
+                "id": "101",
+                "name": "web-1",
+                "packages": [{
+                    "name": "libdemo",
+                    "change": "updated",
+                    "previous_version": "1.0",
+                    "current_version": "2.0"
+                }]
+            }],
+            "failed_systems": [{"id": "102", "name": "db-1", "packages": []}],
+            "systems": []
+        }"#
+        .to_string()])
+        .expect("valid update report");
+        let display = lines.join("\n");
+        assert!(display.contains("UPDATED SYSTEMS"));
+        assert!(display.contains("web-1 (ID 101)"));
+        assert!(display.contains("libdemo: 1.0 -> 2.0 (updated)"));
+        assert!(display.contains("FAILED SYSTEMS"));
+        assert!(display.contains("db-1 (ID 102)"));
+        assert!(!display.contains('{'));
+    }
+
+    #[test]
+    fn update_error_report_is_not_presented_as_an_empty_success() {
+        let lines = format_update_report(&[
+            r#"{"schema_version":1,"status":"error","error":"locked","message":"Another update is already running."}"#
+                .to_string(),
+        ])
+        .expect("valid update error report");
+        assert_eq!(
+            lines,
+            [
+                "UPDATE DID NOT COMPLETE",
+                "Another update is already running."
+            ]
+        );
     }
 
     #[test]

@@ -5,8 +5,11 @@ infrastructure environments. Its task-focused terminal interfaces put updates,
 diagnostics, inventory, logs, and package recovery behind one consistent
 command-line application.
 
-It uses native package managers rather than replacing them. There is no daemon,
-web UI, or database.
+It uses native package managers rather than replacing them. Pacmonster has no
+daemon, web UI, or application-owned database engine. Its caches, history,
+runtime state, event logs, and recovery snapshots are local files, including
+JSON and JSON Lines files; native package managers retain and manage their own
+package databases.
 
 ```text
 Start
@@ -18,7 +21,7 @@ Start
  └─ Advisor        Read help, the handbook, and project information
 ```
 
-Current release: **0.9.6**.
+Current release: **0.9.7**.
 
 ## Contents
 
@@ -60,7 +63,10 @@ Use `↑`/`↓` or `j`/`k` to navigate, `Enter` to choose, `Esc` to return, and
 Running `pacmonster ghosthunter` opens Ghosthunter's action menu. **Run all
 updates** skips Pacmonster's extra confirmation prompt; **Run with
 confirmation** asks before starting the update run; **Preview update** displays
-the planned actions without applying them.
+the planned actions without applying them. After an update, Ghosthunter lists
+systems whose installed packages changed and shows each package's previous and
+current version. It also identifies failed systems and any package-inspection
+errors.
 
 To launch the update view with confirmation directly:
 
@@ -74,7 +80,74 @@ The ordinary update commands are also available:
 sudo pacmonster                 # Interactive update
 sudo pacmonster update          # Interactive update
 sudo pacmonster update --yes    # Do not ask before starting
+sudo pacmonster update --yes --json > update-report.json
 sudo pacmonster dry-run         # Preview planned commands
+```
+
+`update --json` writes a versioned JSON report to stdout; progress and native
+package-manager output go to stderr so the report remains directly parseable.
+The report includes changed packages, old/new versions, system success and
+failure details, and a summary. Redirect stdout to a file or pipe it to another
+program. A successful package-manager run with no detected package changes is
+reported separately from systems that actually changed packages.
+Each package change has a `change` value (`updated`, `installed`, or `removed`)
+and nullable `previous_version` / `current_version` fields. The report's
+`updated_systems` contains successful systems with detected changes;
+`failed_systems` identifies failed targets, and `systems` contains every
+attempted target.
+
+```json
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-25T12:00:00+00:00",
+  "summary": {
+    "systems_attempted": 1,
+    "systems_succeeded": 1,
+    "systems_failed": 0,
+    "packages_changed": 1
+  },
+  "updated_systems": [
+    {
+      "id": "101",
+      "name": "web",
+      "kind": "lxc",
+      "distro": "Debian",
+      "package_manager": "apt",
+      "success": true,
+      "returncode": 0,
+      "duration_seconds": 12.5,
+      "snapshot_id": "snapshot-id",
+      "packages": [{
+        "name": "libdemo",
+        "change": "updated",
+        "previous_version": "1.0",
+        "current_version": "2.0"
+      }],
+      "package_report_error": null
+    }
+  ],
+  "failed_systems": [],
+  "systems": [
+    {
+      "id": "101",
+      "name": "web",
+      "kind": "lxc",
+      "distro": "Debian",
+      "package_manager": "apt",
+      "success": true,
+      "returncode": 0,
+      "duration_seconds": 12.5,
+      "snapshot_id": "snapshot-id",
+      "packages": [{
+        "name": "libdemo",
+        "change": "updated",
+        "previous_version": "1.0",
+        "current_version": "2.0"
+      }],
+      "package_report_error": null
+    }
+  ]
+}
 ```
 
 During an update, Ghosthunter streams package-manager output and shows the
@@ -218,6 +291,9 @@ Inventory, status, and history caches live in
 `~/.cache/pacmonster/` for the user running the command (with `sudo`, this is
 typically root's home directory). Runtime state and event logs are written
 under `/var/tmp/` with the effective user ID in their filenames.
+These are file-backed stores, not a Pacmonster application database. Deleting
+or editing them can remove Pacmonster's cached views and history, but does not
+alter the native package manager's own package database.
 
 | Data | Location |
 | --- | --- |

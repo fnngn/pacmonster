@@ -2,6 +2,7 @@ import math
 import os
 import signal
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -17,7 +18,7 @@ from .events import emit_ghost_event
 from .events import emit_pool_event
 from .events import write_state
 from .ghost_pool import GhostPool
-from .librarian import SnapshotError, create_snapshot
+from .librarian import SnapshotError, create_snapshot, package_manifest
 
 MAX_UPDATE_WORKERS = 8
 MIN_MEMORY_RESERVE_BYTES = 1024**3
@@ -181,12 +182,13 @@ def estimate_action_seconds(action):
 class ActionRunner:
     """Run package-manager commands and stop their process groups on request."""
 
-    def __init__(self):
+    def __init__(self, json_output=False):
         """Initialize process tracking for one update run."""
 
         self._lock = threading.Lock()
         self._processes = set()
         self._stopping = False
+        self._json_output = json_output
 
     def execute(self, action):
         """Run one planned action and return its exit status and duration."""
@@ -197,12 +199,14 @@ class ActionRunner:
             if self._stopping:
                 raise CancelledError("Update run was interrupted")
 
-            process = subprocess.Popen(
-                action["command"],
-                shell=True,
-                text=True,
-                start_new_session=True
-            )
+            process_options = {
+                "shell": True,
+                "text": True,
+                "start_new_session": True,
+            }
+            if self._json_output:
+                process_options.update(stdout=sys.stderr, stderr=sys.stderr)
+            process = subprocess.Popen(action["command"], **process_options)
             self._processes.add(process)
 
         try:
@@ -320,20 +324,46 @@ def build_dry_run():
     return actions
 
 
-def confirm_critical_updates(actions, assume_yes=False):
+def confirm_critical_updates(actions, assume_yes=False, json_output=False):
     """Return whether to proceed, prompting unless assume_yes is enabled."""
 
     if assume_yes:
         return True
 
-    print()
-    print(f"Targets to update: {len(actions)}")
+    output = sys.stderr if json_output else sys.stdout
+    print(file=output)
+    print(f"Targets to update: {len(actions)}", file=output)
 
-    answer = input("Continue update run? [y/N] ")
+    print("Continue update run? [y/N] ", end="", file=output, flush=True)
+    answer = input()
 
     return answer.lower() == "y"
 
-def perform_update(assume_yes=False):
+def _package_changes(before, after):
+    """Describe installed package version changes between two manifests."""
+
+    changes = []
+    for name in sorted(before.keys() | after.keys()):
+        old_version = before.get(name)
+        new_version = after.get(name)
+        if old_version == new_version:
+            continue
+        if old_version is None:
+            change = "installed"
+        elif new_version is None:
+            change = "removed"
+        else:
+            change = "updated"
+        changes.append({
+            "name": name,
+            "change": change,
+            "previous_version": old_version,
+            "current_version": new_version,
+        })
+    return changes
+
+
+def perform_update(assume_yes=False, json_output=False):
     """Run planned updates in parallel and return results or a control status.
 
     The update lock is held for the entire run and released on every exit path.
@@ -343,6 +373,7 @@ def perform_update(assume_yes=False):
         return "LOCKED"
 
     started_total = time.perf_counter()
+    output = sys.stderr if json_output else sys.stdout
 
     try:
 
@@ -351,29 +382,36 @@ def perform_update(assume_yes=False):
         if actions is None:
             return None
 
-        if not confirm_critical_updates(actions, assume_yes):
+        if not confirm_critical_updates(actions, assume_yes, json_output):
             return "ABORTED"
 
         try:
             for action in actions:
                 print(
                     f"[{action['name']}] saving package snapshot before update...",
+                    file=output,
                     flush=True,
                 )
                 snapshot = create_snapshot(action)
                 action["snapshot_id"] = snapshot["id"]
+                action["before_packages"] = snapshot.get("packages")
                 print(
                     f"[{action['name']}] package snapshot "
                     f"{snapshot['id']} saved "
-                    f"({snapshot['package_count']} packages)"
+                    f"({snapshot['package_count']} packages)",
+                    file=output,
                 )
                 if not snapshot["restorable"]:
                     print(
                         f"[{action['name']}] warning: no cached package "
-                        "archives; recovery may require repository access"
+                        "archives; recovery may require repository access",
+                        file=output,
                     )
         except SnapshotError as error:
-            print(f"Update cancelled: could not create package snapshot: {error}")
+            print(
+                f"Update cancelled: could not create package snapshot: {error}",
+                file=output,
+            )
             return "SNAPSHOT_FAILED"
 
         worker_count = get_worker_count(len(actions))
@@ -381,16 +419,17 @@ def perform_update(assume_yes=False):
         pool = GhostPool(max_ghosts=worker_count, cpu_cores=cpu_cores)
         results = []
         failed = 0
-        runner = ActionRunner()
+        runner = ActionRunner(json_output=json_output)
 
-        print()
-        print("PACMONSTER UPDATE")
+        print(file=output)
+        print("PACMONSTER UPDATE", file=output)
         print(
             f"Using {worker_count} worker(s) "
             f"for {cpu_cores:g} available CPU core(s); "
-            "concurrency is capped to reserve system resources."
+            "concurrency is capped to reserve system resources.",
+            file=output,
         )
-        print()
+        print(file=output)
 
         with ThreadPoolExecutor(max_workers=worker_count) as ghosts:
             pending = deque(actions)
@@ -461,17 +500,32 @@ def perform_update(assume_yes=False):
                             failed += 1
 
                         action = result["action"]
-                        results.append({
+                        record = {
                             "id": action["id"],
                             "name": action["name"],
+                            "kind": action.get("kind"),
+                            "distro": action.get("distro"),
+                            "package_manager": action.get("package_manager"),
                             "snapshot_id": action["snapshot_id"],
                             "success": result["success"],
                             "returncode": result["returncode"],
-                            "duration": result["duration"]
-                        })
+                            "duration": result["duration"],
+                            "packages": [],
+                        }
+                        before_packages = action.get("before_packages")
+                        if isinstance(before_packages, dict):
+                            try:
+                                after_packages = package_manifest(action)
+                                record["packages"] = _package_changes(
+                                    before_packages,
+                                    after_packages,
+                                )
+                            except (SnapshotError, OSError) as error:
+                                record["package_report_error"] = str(error)
+                        results.append(record)
                         emit_pool_event(pool)
             except KeyboardInterrupt:
-                print("\nInterrupt received; stopping running updates...")
+                print("\nInterrupt received; stopping running updates...", file=output)
                 pending.clear()
                 for future in running:
                     future.cancel()
@@ -488,12 +542,12 @@ def perform_update(assume_yes=False):
 
         total_duration = time.perf_counter() - started_total
 
-        print()
-        print(f"UPDATED      {len(results) - failed}")
-        print(f"FAILED       {failed}")
-        print(f"DURATION     {total_duration:.1f}s")
-        print()
-        print("────────────────────────────────────────────────────────────")
+        print(file=output)
+        print(f"UPDATED      {len(results) - failed}", file=output)
+        print(f"FAILED       {failed}", file=output)
+        print(f"DURATION     {total_duration:.1f}s", file=output)
+        print(file=output)
+        print("────────────────────────────────────────────────────────────", file=output)
 
         return results
 

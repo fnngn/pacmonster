@@ -478,6 +478,7 @@ def _archive_cache(target, packages):
                 print(
                     f"[{target['name']}] saved container packages "
                     f"{index}/{len(matching)}",
+                    file=sys.stderr,
                     flush=True,
                 )
     return stored

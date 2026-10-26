@@ -96,10 +96,87 @@ class PackageUpdatesTests(unittest.TestCase):
             cli_main.ghosthunter_command(confirm=True)
 
         run_tui.assert_called_once_with(
-            ["/usr/bin/pacmonster-tui", "--run-updates-confirm"],
+            ["/usr/bin/pacmonster-tui", "--run-ghosthunter-confirm"],
             check=False,
         )
 
+    def test_update_json_flag_emits_a_parseable_report(self):
+        result = [{
+            "id": "101",
+            "name": "container-a",
+            "kind": "lxc",
+            "distro": "Debian",
+            "package_manager": "apt",
+            "snapshot_id": "snapshot-1",
+            "success": True,
+            "returncode": 0,
+            "duration": 2.5,
+            "packages": [{
+                "name": "libdemo",
+                "change": "updated",
+                "previous_version": "1.0",
+                "current_version": "2.0",
+            }],
+        }]
+        output = StringIO()
+        errors = StringIO()
+        with (
+            patch.object(
+                cli_main,
+                "perform_update",
+                side_effect=lambda *_args, **_kwargs: (
+                    print("[container-a] snapshot progress"),
+                    result,
+                )[1],
+            ) as perform,
+            patch.object(cli_main, "add_history"),
+            redirect_stdout(output),
+            redirect_stderr(errors),
+        ):
+            with self.assertRaises(SystemExit) as exit_error:
+                cli_main.update_command(assume_yes=True, json_output=True)
+
+        report = json.loads(output.getvalue())
+        self.assertEqual(exit_error.exception.code, 0)
+        self.assertEqual(report["schema_version"], 1)
+        self.assertEqual(report["summary"]["packages_changed"], 1)
+        self.assertEqual(report["updated_systems"][0]["name"], "container-a")
+        self.assertEqual(
+            report["updated_systems"][0]["packages"][0]["current_version"],
+            "2.0",
+        )
+        self.assertEqual(errors.getvalue(), "[container-a] snapshot progress\n")
+        perform.assert_called_once_with(True, json_output=True)
+
+    def test_update_cli_dispatch_passes_json_flag(self):
+        with (
+            patch.object(
+                cli_main.sys,
+                "argv",
+                ["pacmonster", "update", "--yes", "--json"],
+            ),
+            patch.object(cli_main, "update_command") as run_update,
+        ):
+            cli_main._dispatch()
+
+        run_update.assert_called_once_with(True, json_output=True)
+
+    def test_json_confirmation_prompt_is_written_to_stderr(self):
+        stdout = StringIO()
+        stderr = StringIO()
+        with (
+            patch("builtins.input", return_value="y"),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            confirmed = update.confirm_critical_updates(
+                [{"name": "host"}],
+                json_output=True,
+            )
+
+        self.assertTrue(confirmed)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("Continue update run? [y/N]", stderr.getvalue())
     def test_ghosthunter_cli_flag_enables_update_confirmation(self):
         with (
             patch.object(cli_main.sys, "argv", ["pacmonster", "ghosthunter", "--confirm"]),
@@ -213,6 +290,7 @@ class PackageUpdatesTests(unittest.TestCase):
         self.assertIn("| WHAT IT DOES", help_text)
         self.assertIn("Open the update dashboard and action menu.", help_text)
         self.assertIn("Restore package versions from a snapshot.", help_text)
+        self.assertIn("update [--yes] [--json]", help_text)
 
     def test_archeologist_command_launches_tui(self):
         with (
@@ -381,6 +459,55 @@ class PackageUpdatesTests(unittest.TestCase):
                 1,
             )
             self.assertEqual(first["bytes"], package_archive.stat().st_size)
+
+    def test_lxc_snapshot_progress_does_not_write_to_stdout(self):
+        target = {
+            "id": "101",
+            "name": "container-a",
+            "kind": "lxc",
+            "package_manager": "apt",
+        }
+        exists = SimpleNamespace(returncode=0)
+        listed = SimpleNamespace(
+            returncode=0,
+            stdout="/var/cache/apt/archives/demo_1_amd64.deb\n",
+            stderr="",
+        )
+        pulled = SimpleNamespace(returncode=0, stderr="")
+        stdout = StringIO()
+        stderr = StringIO()
+        with (
+            patch.object(librarian, "list_snapshots", return_value=[]),
+            patch.object(librarian, "_shared_blob_index", return_value={}),
+            patch.object(
+                librarian,
+                "_archive_identity_for_target",
+                return_value=("demo", "1", "amd64"),
+            ),
+            patch.object(librarian, "_reuse_remote_blob", return_value=None),
+            patch.object(
+                librarian,
+                "_store_archive_blob",
+                return_value={
+                    "blob": "blob.deb",
+                    "sha256": "a" * 64,
+                    "bytes": 1,
+                    "new": True,
+                },
+            ),
+            patch.object(
+                librarian.subprocess,
+                "run",
+                side_effect=[exists, listed, pulled],
+            ),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            saved = librarian._archive_cache(target, {"demo": "1"})
+
+        self.assertEqual(saved["demo"]["blob"], "blob.deb")
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("saved container packages 1/1", stderr.getvalue())
 
     def test_librarian_stores_only_new_package_versions_across_snapshots(self):
         target = {
@@ -738,6 +865,122 @@ class PackageUpdatesTests(unittest.TestCase):
             shell=True,
             text=True,
             start_new_session=True,
+        )
+
+    def test_json_package_command_output_does_not_contaminate_stdout(self):
+        process = Mock()
+        process.wait.return_value = 0
+        action = {"name": "test-container", "command": "printf progress"}
+
+        with (
+            patch.object(update.subprocess, "Popen", return_value=process) as popen,
+            patch.object(update, "sys") as update_sys,
+        ):
+            update_sys.stderr = object()
+            result = update.ActionRunner(json_output=True).execute(action)
+
+        self.assertTrue(result["success"])
+        popen.assert_called_once_with(
+            action["command"],
+            shell=True,
+            text=True,
+            start_new_session=True,
+            stdout=update_sys.stderr,
+            stderr=update_sys.stderr,
+        )
+
+    def test_package_manifest_diff_lists_updated_added_and_removed(self):
+        self.assertEqual(
+            update._package_changes(
+                {"old": "1.0", "changed": "1.0"},
+                {"new": "1.0", "changed": "2.0"},
+            ),
+            [
+                {
+                    "name": "changed",
+                    "change": "updated",
+                    "previous_version": "1.0",
+                    "current_version": "2.0",
+                },
+                {
+                    "name": "new",
+                    "change": "installed",
+                    "previous_version": None,
+                    "current_version": "1.0",
+                },
+                {
+                    "name": "old",
+                    "change": "removed",
+                    "previous_version": "1.0",
+                    "current_version": None,
+                },
+            ],
+        )
+
+    def test_update_result_compares_package_manifests(self):
+        action = {
+            "id": "101",
+            "name": "container-a",
+            "kind": "lxc",
+            "distro": "Debian",
+            "package_manager": "apt",
+            "command": "update-command",
+        }
+        with (
+            patch.object(update, "acquire_lock", return_value=True),
+            patch.object(update, "release_lock"),
+            patch.object(update, "build_dry_run", return_value=[action]),
+            patch.object(
+                update,
+                "create_snapshot",
+                return_value={
+                    "id": "snapshot-101",
+                    "package_count": 2,
+                    "restorable": True,
+                    "packages": {"libdemo": "1.0", "unchanged": "5"},
+                },
+            ),
+            patch.object(
+                update,
+                "package_manifest",
+                return_value={"libdemo": "2.0", "unchanged": "5", "new": "1"},
+            ),
+            patch.object(
+                update,
+                "execute_action",
+                side_effect=lambda item, _runner: {
+                    "action": item,
+                    "stdout": "",
+                    "stderr": "",
+                    "returncode": 0,
+                    "success": True,
+                    "duration": 0.5,
+                },
+            ),
+            patch.object(update, "emit_ghost_event"),
+            patch.object(update, "emit_pool_event"),
+            patch.object(update, "get_worker_count", return_value=1),
+            redirect_stdout(StringIO()),
+        ):
+            result = update.perform_update(assume_yes=True)
+
+        self.assertEqual(result[0]["name"], "container-a")
+        self.assertEqual(
+            result[0]["packages"],
+            [
+                {
+                    "name": "libdemo",
+                    "change": "updated",
+                    "previous_version": "1.0",
+                    "current_version": "2.0",
+                },
+                {
+                    "name": "new",
+                    "change": "installed",
+                    "previous_version": None,
+                    "current_version": "1",
+                },
+            ],
         )
 
     def test_interrupt_stops_package_command_process_group(self):

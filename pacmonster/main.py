@@ -3,6 +3,8 @@ import json
 import os
 import shutil
 import subprocess
+from contextlib import redirect_stdout
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .inventory import build_inventory
@@ -384,31 +386,129 @@ def dry_run_command(json_output=False):
         print(action["id"], action["name"], "->", action["command"])
 
 
-def update_command(assume_yes=False):
+def _update_report(results):
+    """Build the versioned JSON report shared by CLI and Ghosthunter."""
+
+    systems = []
+    for item in results:
+        systems.append({
+            "id": str(item["id"]),
+            "name": item["name"],
+            "kind": item.get("kind"),
+            "distro": item.get("distro"),
+            "package_manager": item.get("package_manager"),
+            "success": bool(item.get("success", False)),
+            "returncode": item.get("returncode"),
+            "duration_seconds": item.get("duration", 0),
+            "snapshot_id": item.get("snapshot_id"),
+            "packages": item.get("packages", []),
+            "package_report_error": item.get("package_report_error"),
+        })
+
+    updated_systems = [
+        system for system in systems
+        if system["success"] and system["packages"]
+    ]
+    failed_systems = [system for system in systems if not system["success"]]
+    return {
+        "schema_version": 1,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "systems_attempted": len(systems),
+            "systems_succeeded": sum(system["success"] for system in systems),
+            "systems_failed": len(failed_systems),
+            "packages_changed": sum(
+                len(system["packages"]) for system in systems
+            ),
+        },
+        "updated_systems": updated_systems,
+        "failed_systems": failed_systems,
+        "systems": systems,
+    }
+
+
+def _print_update_report(report):
+    """Print a readable summary of changed systems and package versions."""
+
+    print()
+    print("UPDATE REPORT")
+    updated_systems = report["updated_systems"]
+    if updated_systems:
+        print("UPDATED SYSTEMS")
+        for system in updated_systems:
+            print(f"- {system['name']} (ID {system['id']})")
+            for package in system["packages"]:
+                previous = package.get("previous_version") or "not installed"
+                current = package.get("current_version") or "removed"
+                print(
+                    f"  - {package['name']}: {previous} -> {current} "
+                    f"({package['change']})"
+                )
+    else:
+        print("UPDATED SYSTEMS: none (no package version changes detected)")
+
+    failed_systems = report["failed_systems"]
+    if failed_systems:
+        print("FAILED SYSTEMS")
+        for system in failed_systems:
+            print(f"- {system['name']} (ID {system['id']})")
+            for package in system["packages"]:
+                previous = package.get("previous_version") or "not installed"
+                current = package.get("current_version") or "removed"
+                print(
+                    f"  - {package['name']}: {previous} -> {current} "
+                    f"({package['change']})"
+                )
+    for system in report["systems"]:
+        if system.get("package_report_error"):
+            print(
+                f"Could not inspect packages on {system['name']}: "
+                f"{system['package_report_error']}"
+            )
+
+
+def update_command(assume_yes=False, json_output=False):
     """Run updates and translate scheduler outcomes into CLI exit codes."""
 
-    result = perform_update(assume_yes)
+    if json_output:
+        with redirect_stdout(sys.stderr):
+            result = perform_update(assume_yes, json_output=True)
+    else:
+        result = perform_update(assume_yes)
 
-    if result == "LOCKED":
-        print("Another update is already running.")
-        sys.exit(3)
-
-    if result == "ABORTED":
-        print("Update aborted.")
-        sys.exit(2)
-
-    if result == "INTERRUPTED":
-        print("Update interrupted.")
-        sys.exit(130)
-
-    if result == "SNAPSHOT_FAILED":
-        sys.exit(4)
+    errors = {
+        "LOCKED": ("Another update is already running.", 3),
+        "ABORTED": ("Update aborted.", 2),
+        "INTERRUPTED": ("Update interrupted.", 130),
+        "SNAPSHOT_FAILED": ("Could not create required package snapshots.", 4),
+    }
+    if isinstance(result, str) and result in errors:
+        message, exit_code = errors[result]
+        if json_output:
+            print(json.dumps({
+                "schema_version": 1,
+                "status": "error",
+                "error": result.lower(),
+                "message": message,
+            }))
+        else:
+            print(message)
+        sys.exit(exit_code)
 
     if result is None:
-        print("No status cache found.")
+        message = "No status cache found."
+        if json_output:
+            print(json.dumps({
+                "schema_version": 1,
+                "status": "error",
+                "error": "missing_status_cache",
+                "message": message,
+            }))
+        else:
+            print(message)
         sys.exit(4)
 
-        return
+    report = _update_report(result)
 
     updated = sum(1 for item in result if item.get("success", False))
     failed = len(result) - updated
@@ -430,11 +530,18 @@ def update_command(assume_yes=False):
                     "name": item["name"],
                     "duration": item["duration"],
                     "success": item["success"],
+                    "packages": item.get("packages", []),
+                    "package_report_error": item.get("package_report_error"),
                 }
                 for item in result
             ],
         }
     )
+
+    if json_output:
+        print(json.dumps(report, indent=2))
+    else:
+        _print_update_report(report)
 
     if failed > 0:
         sys.exit(1)
@@ -504,7 +611,7 @@ def _run_tui(mode):
 def ghosthunter_command(confirm=False):
     """Launch Ghosthunter, optionally retaining update confirmation prompts."""
 
-    _run_tui("updates-confirm" if confirm else "ghosthunter")
+    _run_tui("ghosthunter-confirm" if confirm else "ghosthunter")
 
 
 def witchdoctor_command():
@@ -549,10 +656,10 @@ HELP_COMMANDS = [
     ("doctor [--json]", "Diagnose system and package-manager health."),
     ("doctor --installation", "Check the Pacmonster CLI, Python package, and TUI."),
     ("dry-run [--json]", "Preview planned update commands without applying them."),
-    ("update [--yes]", "Run package updates; --yes skips the initial confirmation."),
+    ("update [--yes] [--json]", "Run package updates and optionally print a machine-readable report."),
+    ("ghosthunter --confirm", "Run updates while retaining the confirmation prompt."),
     ("start", "Open the main menu for all Pacmonster interfaces."),
     ("ghosthunter", "Open the update dashboard and action menu."),
-    ("ghosthunter --confirm", "Run updates while retaining the confirmation prompt."),
     ("witchdoctor", "Open diagnostics, installation checks, and status tools."),
     ("librarian", "Open snapshots, inventory, and update history."),
     ("archeologist", "Browse logs, find issues, or search log text."),
@@ -623,7 +730,7 @@ def _dispatch():
         dry_run_command(json_output)
     elif cmd == "update":
         assume_yes = "--yes" in sys.argv
-        update_command(assume_yes)
+        update_command(assume_yes, json_output="--json" in sys.argv)
     elif cmd == "start":
         start_command()
     elif cmd == "ghosthunter":
