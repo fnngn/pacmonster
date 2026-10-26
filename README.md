@@ -21,7 +21,8 @@ Start
  └─ Advisor        Read help, the handbook, and project information
 ```
 
-Current release: **0.9.8**.
+Current release: **1.0.0**. See the [1.0.0 release notes](RELEASE_NOTES_1.0.0.md)
+for included features, supported scope, and project direction.
 
 ## Contents
 
@@ -33,6 +34,7 @@ Current release: **0.9.8**.
 - [Supported systems](#supported-systems)
 - [Snapshots and recovery](#snapshots-and-recovery)
 - [Update scheduling and safety](#update-scheduling-and-safety)
+- [Project direction and roadmap](#project-direction-and-roadmap)
 - [Local data](#local-data)
 - [Development](#development)
 - [License](#license)
@@ -184,14 +186,21 @@ cd pacmonster
 ```
 
 The installer installs both `pacmonster` and its TUI. For published releases on
-x86_64 and ARM64 Linux, it downloads and verifies a prebuilt TUI, so Rust/Cargo
-and a compiler are not needed. If a matching binary is unavailable (for
-example, when installing from an unreleased checkout or on another architecture),
-the installer builds the TUI from source and can bootstrap Rust/Cargo 1.85 or
-newer and native build tools. Build artifacts are cached under
+x86_64 and ARM64 Linux, you can optionally install the rolling prebuilt TUI:
+
+```bash
+./install.sh --prebuilt-tui
+```
+
+By default, the installer builds the TUI from source and can bootstrap
+Rust/Cargo 1.85 or newer and native build tools. This avoids depending on
+release binaries being kept in sync. Build artifacts are cached under
 `/var/cache/pacmonster/cargo-target`, so later installs reuse dependencies and
-only rebuild changed components. The command is installed in `/usr/local/bin`,
-so `sudo pacmonster` does not rely on a user's private executable path.
+only rebuild changed components. The optional prebuilt mode downloads the
+rolling `latest` binary and verifies its checksum and version. The release
+workflow refreshes those binaries on every push to `master` and on version tags.
+The command is installed in `/usr/local/bin`, so `sudo pacmonster` does not rely
+on a user's private executable path.
 
 Check the installation:
 
@@ -290,6 +299,48 @@ concurrency when memory information is available.
 The update TUI estimates progress from recent successful runs for the same
 target. Until there is enough history, it displays indeterminate progress
 rather than inventing a percentage.
+
+## Project direction and roadmap
+
+Pacmonster is moving from its Python-only beginnings to a hybrid architecture:
+the existing Python core continues to coordinate package managers and system
+operations, while the terminal interface is built in Rust. This transition has
+expanded the project from a collection of update scripts into a set of
+interactive tools for updates, inventory, diagnostics, logs, and recovery.
+It is a gradual evolution, not a claim that the Python core has already been
+rewritten in Rust.
+
+The TUI is becoming the primary guided experience, while the CLI remains a
+first-class interface. Each operation should remain available to scripts and
+operators without the TUI, with equivalent behavior and clear, versioned JSON
+output as the integration contract. New interactive features should not make
+automation depend on terminal parsing.
+
+Planned areas of work, in priority order:
+
+1. **System diagnostics and troubleshooting.** Extend Witchdoctor with a
+   focused diagnostic workflow that gathers actionable host and service health
+   information, explains findings, and offers safe next steps. Checks should be
+   read-only by default, with any repair requiring an explicit action.
+2. **Reliable CLI/TUI and JSON parity.** Keep command coverage aligned, document
+   stable JSON schemas, and add regression checks so interactive and scripted
+   paths remain equally useful.
+3. **Docker and Compose lifecycle updates.** This is feasible, but it is not
+   the same as upgrading packages inside a running container. The safe model
+   is to pull a selected image, recreate its container or Compose service while
+   preserving declared volumes and configuration, then check health and retain
+   a rollback path. Pacmonster does not currently manage Docker containers;
+   discovery, image policy, downtime, stateful volumes, and rollback need to be
+   designed before enabling updates.
+4. **Broader platform coverage.** Improve virtual-machine support and expand
+   diagnostics and package-manager coverage only where behavior can be tested
+   safely across supported distributions.
+5. **Selective Rust migration.** Move core components to Rust only when it
+   materially improves reliability, distribution, or maintainability. Preserve
+   the existing CLI workflows and JSON contracts during any migration.
+
+These are plans, not promises or currently supported capabilities. In
+particular, Docker updates and VM updates are not available in this release.
 
 ## Local data
 

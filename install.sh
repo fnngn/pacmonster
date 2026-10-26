@@ -4,6 +4,25 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUST_HOME="/usr/local/rustup"
 CARGO_HOME="/usr/local/cargo"
+USE_PREBUILT_TUI=false
+
+for argument in "$@"; do
+    case "$argument" in
+        --prebuilt-tui)
+            USE_PREBUILT_TUI=true
+            ;;
+        --help|-h)
+            printf 'Usage: %s [--prebuilt-tui]\n' "$0"
+            printf '  --prebuilt-tui  Install a verified rolling-release binary instead of building locally.\n'
+            exit 0
+            ;;
+        *)
+            echo "Unknown installer option: $argument" >&2
+            echo "Usage: $0 [--prebuilt-tui]" >&2
+            exit 2
+            ;;
+    esac
+done
 
 if [[ "$EUID" -ne 0 ]]; then
     exec sudo -- "$SCRIPT_DIR/install.sh" "$@"
@@ -83,6 +102,7 @@ PY
 
 download_release_tui() {
     local destination="$1"
+    local release_tag="$2"
     local asset_arch
     case "$(uname -m)" in
         x86_64|amd64) asset_arch="x86_64" ;;
@@ -90,16 +110,16 @@ download_release_tui() {
         *) return 1 ;;
     esac
 
-    "$PYTHON_BIN" - "$EXPECTED_VERSION" "$asset_arch" "$destination" <<'PY'
+    "$PYTHON_BIN" - "$release_tag" "$asset_arch" "$destination" <<'PY'
 import hashlib
 import sys
 import urllib.error
 import urllib.request
 
-version, architecture, destination = sys.argv[1:]
+release_tag, architecture, destination = sys.argv[1:]
 repository = "fnngn/pacmonster"
 filename = f"pacmonster-tui-linux-{architecture}"
-base_url = f"https://github.com/{repository}/releases/download/v{version}"
+base_url = f"https://github.com/{repository}/releases/download/{release_tag}"
 
 try:
     with urllib.request.urlopen(f"{base_url}/{filename}", timeout=30) as response:
@@ -179,14 +199,25 @@ if ! /usr/local/bin/pacmonster help >/dev/null; then
 fi
 
 TUI_BINARY="$BUILD_ROOT/pacmonster-tui"
-if download_release_tui "$TUI_BINARY"; then
-    echo "Using the verified prebuilt Pacmonster TUI for $(uname -m)."
-else
-    download_status=$?
-    if [[ "$download_status" -ne 1 ]]; then
+if [[ "$USE_PREBUILT_TUI" == true ]]; then
+    if download_release_tui "$TUI_BINARY" latest; then
+        echo "Using the verified rolling-release TUI for $(uname -m)."
+    else
+        download_status=$?
+        if [[ "$download_status" -eq 1 ]]; then
+            echo "No prebuilt TUI is available for $(uname -m); omit --prebuilt-tui to build locally." >&2
+            exit 1
+        fi
         exit "$download_status"
     fi
-    echo "No prebuilt TUI is available for Pacmonster $INSTALLED_VERSION; building from source."
+    chmod 755 "$TUI_BINARY"
+    TUI_VERSION="$("$TUI_BINARY" --version)"
+    if [[ "$TUI_VERSION" != "pacmonster-tui $EXPECTED_VERSION" ]]; then
+        echo "Prebuilt TUI version mismatch: expected $EXPECTED_VERSION, found $TUI_VERSION." >&2
+        exit 1
+    fi
+else
+    echo "Building the Pacmonster TUI from source."
     ensure_native_build_tools
     ensure_rust_toolchain
     CARGO_BIN="$(command -v cargo)"
