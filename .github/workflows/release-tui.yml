@@ -46,7 +46,7 @@ jobs:
             release_tag="latest"
           fi
           package_version="$(sed -n 's/^version = "\(.*\)"/\1/p' tui/Cargo.toml | head -n 1)"
-          project_version="$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          project_version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n 1)"
           test "$package_version" = "$project_version"
           if [[ "$release_tag" != "latest" ]]; then
             test "$release_tag" = "v$package_version"
