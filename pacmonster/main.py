@@ -383,7 +383,13 @@ def dry_run_command(json_output=False):
         return
 
     for action in actions:
-        print(action["id"], action["name"], "->", action["command"])
+        print(
+            f"{action['name']} (ID {action['id']}) | "
+            f"{action['kind']} | {action['distro']} | "
+            f"{action['package_manager']} | "
+            f"Kernel: {action.get('kernel') or 'unavailable'}"
+        )
+        print(f"  Planned command: {action['command']}")
 
 
 def _update_report(results):
@@ -397,6 +403,7 @@ def _update_report(results):
             "kind": item.get("kind"),
             "distro": item.get("distro"),
             "package_manager": item.get("package_manager"),
+            "kernel": item.get("kernel"),
             "success": bool(item.get("success", False)),
             "returncode": item.get("returncode"),
             "duration_seconds": item.get("duration", 0),

@@ -271,6 +271,27 @@ def execute_action(action, runner):
     return runner.execute(action)
 
 
+def _kernel_version(item):
+    """Return the running kernel for the host or an LXC target."""
+
+    command = ["uname", "-r"]
+    if item.kind == "lxc":
+        command = ["pct", "exec", str(item.id), "--", *command]
+    try:
+        result = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 def build_dry_run():
     """Build package-update actions for supported running hosts and LXCs."""
 
@@ -318,6 +339,7 @@ def build_dry_run():
             "kind": item.kind,
             "distro": item.distro.title(),
             "package_manager": item.package_manager,
+            "kernel": _kernel_version(item),
             "command": command
         })
 
@@ -506,6 +528,7 @@ def perform_update(assume_yes=False, json_output=False):
                             "kind": action.get("kind"),
                             "distro": action.get("distro"),
                             "package_manager": action.get("package_manager"),
+                            "kernel": action.get("kernel"),
                             "snapshot_id": action["snapshot_id"],
                             "success": result["success"],
                             "returncode": result["returncode"],

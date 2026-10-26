@@ -20,6 +20,70 @@ from pacmonster.status import build_status, package_updates
 
 
 class PackageUpdatesTests(unittest.TestCase):
+    def test_update_plan_includes_system_identity_and_kernel(self):
+        host = SystemTarget(
+            id="host",
+            name="node-a",
+            kind="host",
+            distro="arch",
+            status="running",
+            package_manager="pacman",
+        )
+        container = SystemTarget(
+            id="101",
+            name="web",
+            kind="lxc",
+            distro="debian",
+            status="running",
+            package_manager="apt",
+        )
+        with (
+            patch("pacmonster.inventory.build_inventory", return_value=[host, container]),
+            patch.object(update, "_kernel_version", side_effect=["6.12.1", "6.8.0"]),
+        ):
+            actions = update.build_dry_run()
+
+        self.assertEqual(
+            [
+                (
+                    action["name"],
+                    action["kind"],
+                    action["distro"],
+                    action["package_manager"],
+                    action["kernel"],
+                )
+                for action in actions
+            ],
+            [
+                ("node-a", "host", "Arch", "pacman", "6.12.1"),
+                ("web", "lxc", "Debian", "apt", "6.8.0"),
+            ],
+        )
+
+    def test_kernel_version_queries_lxc_inside_container(self):
+        target = SystemTarget(
+            id="101",
+            name="web",
+            kind="lxc",
+            distro="debian",
+            status="running",
+            package_manager="apt",
+        )
+        with patch.object(
+            update.subprocess,
+            "run",
+            return_value=SimpleNamespace(returncode=0, stdout="6.8.0\n"),
+        ) as run:
+            self.assertEqual(update._kernel_version(target), "6.8.0")
+
+        run.assert_called_once_with(
+            ["pct", "exec", "101", "--", "uname", "-r"],
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+
     def test_librarian_cleans_partial_snapshot_when_interrupted(self):
         target = {
             "id": "host",
@@ -107,6 +171,7 @@ class PackageUpdatesTests(unittest.TestCase):
             "kind": "lxc",
             "distro": "Debian",
             "package_manager": "apt",
+            "kernel": "6.8.0",
             "snapshot_id": "snapshot-1",
             "success": True,
             "returncode": 0,
@@ -141,6 +206,7 @@ class PackageUpdatesTests(unittest.TestCase):
         self.assertEqual(report["schema_version"], 1)
         self.assertEqual(report["summary"]["packages_changed"], 1)
         self.assertEqual(report["updated_systems"][0]["name"], "container-a")
+        self.assertEqual(report["updated_systems"][0]["kernel"], "6.8.0")
         self.assertEqual(
             report["updated_systems"][0]["packages"][0]["current_version"],
             "2.0",

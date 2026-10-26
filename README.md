@@ -87,9 +87,11 @@ sudo pacmonster dry-run         # Preview planned commands
 `update --json` writes a versioned JSON report to stdout; progress and native
 package-manager output go to stderr so the report remains directly parseable.
 The report includes changed packages, old/new versions, system success and
-failure details, and a summary. Redirect stdout to a file or pipe it to another
-program. A successful package-manager run with no detected package changes is
-reported separately from systems that actually changed packages.
+failure details, and a summary. Each attempted system includes its name, ID,
+system type, distribution, package manager, and running kernel when available.
+Redirect stdout to a file or pipe it to another program. A successful
+package-manager run with no detected package changes is reported separately
+from systems that actually changed packages.
 Each package change has a `change` value (`updated`, `installed`, or `removed`)
 and nullable `previous_version` / `current_version` fields. The report's
 `updated_systems` contains successful systems with detected changes;

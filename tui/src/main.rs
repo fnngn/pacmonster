@@ -69,6 +69,14 @@ struct UpdateSystem {
     id: String,
     name: String,
     #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    distro: Option<String>,
+    #[serde(default)]
+    package_manager: Option<String>,
+    #[serde(default)]
+    kernel: Option<String>,
+    #[serde(default)]
     packages: Vec<UpdatePackage>,
     #[serde(default)]
     package_report_error: Option<String>,
@@ -2084,8 +2092,28 @@ fn format_update_report(stdout: &[String]) -> Result<Vec<String>, String> {
         ),
         format!("Packages changed: {}", report.summary.packages_changed),
         String::new(),
-        "UPDATED SYSTEMS".to_string(),
+        "SYSTEM OVERVIEW".to_string(),
     ];
+
+    if report.systems.is_empty() {
+        lines.push("No systems were included in this update run.".to_string());
+    } else {
+        for system in &report.systems {
+            let kind = system.kind.as_deref().unwrap_or("system");
+            let distro = system.distro.as_deref().unwrap_or("OS unavailable");
+            let package_manager = system
+                .package_manager
+                .as_deref()
+                .unwrap_or("package manager unavailable");
+            let kernel = system.kernel.as_deref().unwrap_or("unavailable");
+            lines.push(format!("- {} (ID {})", system.name, system.id));
+            lines.push(format!(
+                "  {kind} | {distro} | {package_manager} | Kernel: {kernel}"
+            ));
+        }
+    }
+
+    lines.extend([String::new(), "UPDATED SYSTEMS".to_string()]);
 
     if report.updated_systems.is_empty() {
         lines.push("No package version changes detected.".to_string());
@@ -4189,11 +4217,22 @@ mod tests {
                 }]
             }],
             "failed_systems": [{"id": "102", "name": "db-1", "packages": []}],
-            "systems": []
+            "systems": [{
+                "id": "101",
+                "name": "web-1",
+                "kind": "lxc",
+                "distro": "Debian",
+                "package_manager": "apt",
+                "kernel": "6.8.0",
+                "success": true,
+                "packages": []
+            }]
         }"#
         .to_string()])
         .expect("valid update report");
         let display = lines.join("\n");
+        assert!(display.contains("SYSTEM OVERVIEW"));
+        assert!(display.contains("lxc | Debian | apt | Kernel: 6.8.0"));
         assert!(display.contains("UPDATED SYSTEMS"));
         assert!(display.contains("web-1 (ID 101)"));
         assert!(display.contains("libdemo: 1.0 -> 2.0 (updated)"));
