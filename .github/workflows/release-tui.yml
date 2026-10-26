@@ -39,8 +39,8 @@ jobs:
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static -C link-arg=-static
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C target-feature=+crt-static -C link-arg=-static
         run: |
           sudo apt-get update
           sudo apt-get install -y musl-tools
@@ -48,7 +48,7 @@ jobs:
           cargo +stable build --locked --release --target "${{ matrix.target }}" --manifest-path tui/Cargo.toml
           install -D "tui/target/${{ matrix.target }}/release/pacmonster-tui" \
             "dist/pacmonster-tui-linux-${{ matrix.architecture }}"
-          if readelf -l "dist/pacmonster-tui-linux-${{ matrix.architecture }}" | grep -q INTERP; then
+          if readelf -lW "dist/pacmonster-tui-linux-${{ matrix.architecture }}" | grep -Fq ' INTERP '; then
             echo "The TUI binary still requires a dynamic loader." >&2
             exit 1
           fi
