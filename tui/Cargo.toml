@@ -1,6 +1,6 @@
 [package]
 name = "pacmonster-tui"
-version = "0.9.7"
+version = "0.9.7+1"
 edition = "2024"
 rust-version = "1.85"
 

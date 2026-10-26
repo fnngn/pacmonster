@@ -2946,8 +2946,6 @@ fn main() -> io::Result<()> {
                             }
                             KeyCode::Enter => {
                                 let selection = start_menu_selection;
-                                start_menu_notice =
-                                    format!("OPENING {}...", START_MENU_ENTRIES[selection].0);
                                 match launch_start_selection(&mut terminal, selection) {
                                     Ok(0) => {
                                         start_menu_notice = format!(

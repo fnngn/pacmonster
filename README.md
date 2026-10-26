@@ -21,7 +21,7 @@ Start
  └─ Advisor        Read help, the handbook, and project information
 ```
 
-Current release: **0.9.7**.
+Current release: **0.9.7.1**.
 
 ## Contents
 
