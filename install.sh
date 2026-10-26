@@ -198,6 +198,7 @@ else
         --manifest-path "$SCRIPT_DIR/tui/Cargo.toml"
     cp "$CARGO_TARGET_DIR/release/pacmonster-tui" "$TUI_BINARY"
 fi
+chmod 755 "$TUI_BINARY"
 if ! "$TUI_BINARY" --version >/dev/null; then
     echo "Installation failed: the Pacmonster TUI binary cannot be started on this system." >&2
     exit 1
